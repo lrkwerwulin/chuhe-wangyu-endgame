@@ -27,14 +27,15 @@ for (const puzzle of PUZZLES) {
   const actualWinning = analysis.legal.filter((item) => item.finalOutcome === 'win').map((item) => moveKey(item.move)).sort();
   const expectedWinning = [...puzzle.expectedWinningMoveKeys].sort();
   assert.deepEqual(actualWinning, expectedWinning, `${puzzle.id}: root winning-move proof changed`);
-  const horizonThreeWinning = analysis.legal
-    .filter((item) => item.horizons[2]?.outcome === 'win')
+  const mateHorizon = puzzle.mateMoves * 2 - 1;
+  const firstMateHorizonWinning = analysis.legal
+    .filter((item) => item.horizons[mateHorizon - 1]?.outcome === 'win')
     .map((item) => moveKey(item.move))
     .sort();
-  assert.deepEqual(horizonThreeWinning, expectedWinning, `${puzzle.id}: M2 win should first be visible at H3`);
+  assert.deepEqual(firstMateHorizonWinning, expectedWinning, `${puzzle.id}: M${puzzle.mateMoves} win should first be visible at H${mateHorizon}`);
   const winningVerdict = analysis.legal.find((item) => item.finalOutcome === 'win');
   assert(winningVerdict, `${puzzle.id}: side to move no longer has a forced win`);
-  assert.equal(winningVerdict.firstProvenHorizon, 3, `${puzzle.id}: winning move proof horizon changed`);
+  assert.equal(winningVerdict.firstProvenHorizon, mateHorizon, `${puzzle.id}: winning move proof horizon changed`);
   assert.equal(winningVerdict.horizons.at(-1)?.mateMoves, puzzle.mateMoves, `${puzzle.id}: mate distance changed`);
 
   const actualHorizonCounts = analysis.horizons.map(({ horizon, wins, losses, unresolved }) => ({ horizon, wins, losses, unresolved }));
@@ -60,11 +61,11 @@ for (const puzzle of PUZZLES) {
     puzzle.proofDepth,
     puzzle.winnerTurns,
     puzzle.uniqueWinnerTurns,
-    1,
+    puzzle.maxWinningMoves,
   );
   assert.equal(proof.forcedWin, true, `${puzzle.id}: bounded forced-win proof failed`);
   assert.equal(proof.rigid, true, `${puzzle.id}: winner's early decisions are no longer unique across every defense`);
-  assert.equal(proof.widestDecision, 1, `${puzzle.id}: a checked winner node exposes multiple winning moves`);
+  assert(proof.widestDecision <= puzzle.maxWinningMoves, `${puzzle.id}: a checked winner node exceeds its winning-move cap`);
   assert.equal(proof.mateMoves, puzzle.mateMoves, `${puzzle.id}: rigidity proof mate distance changed`);
 
   const actualPv = proof.pv.map(moveKey);
@@ -87,6 +88,7 @@ for (const puzzle of PUZZLES) {
     human: puzzle.human,
     legal: analysis.legal.length,
     winning: actualWinning.length,
+    replyEdges,
     horizon: analysis.horizons.map((item) => `${item.wins}/${item.losses}/${item.unresolved}`).join(' → '),
     mate: `M${proof.mateMoves}`,
     rigidTurns: `${puzzle.uniqueWinnerTurns}/${puzzle.winnerTurns}`,
@@ -101,4 +103,27 @@ for (const puzzle of PUZZLES) {
 }
 
 console.table(summaries);
-console.log(`\nVerified ${summaries.length} puzzles: forced M2 wins; H1–H7 move funnels are stable, and the winner has exactly one winning move at both of its first two turns across every defense branch.`);
+const mateRange = [...new Set(PUZZLES.map((puzzle) => `M${puzzle.mateMoves}`))].join('/');
+console.log(`\nVerified ${summaries.length} puzzles (${mateRange}): every stored horizon funnel, mate distance, principal line, and declared winner-decision bound is stable.`);
+const totals = summaries.reduce((sum, item) => ({
+  rootMoves: sum.rootMoves + item.legal,
+  winningRootMoves: sum.winningRootMoves + item.winning,
+  replyEdges: sum.replyEdges + item.replyEdges,
+  decisionNodes: sum.decisionNodes + item.decisionNodes,
+  defenseBranches: sum.defenseBranches + item.defenseBranches,
+  nodes: sum.nodes + item.nodes,
+  cutoffs: sum.cutoffs + item.cutoffs,
+  tableHits: sum.tableHits + item.tableHits,
+  elapsedMs: sum.elapsedMs + item.elapsedMs,
+}), {
+  rootMoves: 0,
+  winningRootMoves: 0,
+  replyEdges: 0,
+  decisionNodes: 0,
+  defenseBranches: 0,
+  nodes: 0,
+  cutoffs: 0,
+  tableHits: 0,
+  elapsedMs: 0,
+});
+console.log('Aggregate:', totals);

@@ -14,6 +14,7 @@ interface VerificationRequest {
   depth: number;
   winnerTurns: number;
   uniqueWinnerTurns: number;
+  maxWinningMoves: number;
 }
 
 const workerScope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
@@ -65,7 +66,7 @@ workerScope.onmessage = ({ data }: MessageEvent<VerificationRequest>) => {
       data.depth,
       data.winnerTurns,
       data.uniqueWinnerTurns,
-      1,
+      data.maxWinningMoves,
     );
     workerScope.postMessage({
       kind: 'complete',

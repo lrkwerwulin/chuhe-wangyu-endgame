@@ -6,8 +6,10 @@ const args = new Map(process.argv.slice(2).map((argument) => {
   return [key, rest.length ? rest.join('=') : true];
 }));
 const requestedId = typeof args.get('puzzle') === 'string' ? args.get('puzzle') : null;
-const depthValue = Number(args.get('depth') ?? 7);
-const depth = Number.isFinite(depthValue) ? Math.max(1, Math.trunc(depthValue)) : 7;
+const requestedDepth = args.has('depth') ? Number(args.get('depth')) : null;
+const boundedRequestedDepth = requestedDepth !== null && Number.isFinite(requestedDepth)
+  ? Math.max(1, Math.trunc(requestedDepth))
+  : null;
 const includeMoves = args.has('moves') || Boolean(requestedId);
 const asJson = args.has('json');
 const selected = requestedId ? PUZZLES.filter((puzzle) => puzzle.id === requestedId) : PUZZLES;
@@ -17,6 +19,7 @@ if (selected.length === 0) {
   process.exitCode = 1;
 } else {
   const reports = selected.map((puzzle) => {
+    const depth = boundedRequestedDepth ?? puzzle.proofDepth;
     const analysis = analyseMoveHorizons(puzzle.state, depth);
     const replyCounts = analysis.legal.map((item) => item.replyCount);
     const replyEdges = replyCounts.reduce((sum, count) => sum + count, 0);

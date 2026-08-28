@@ -28,6 +28,8 @@
     "search:puzzles": "node --experimental-strip-types scripts/random-winning-puzzles.mjs",
     "evolve:puzzles": "node --experimental-strip-types scripts/evolve-winning-puzzles.mjs",
     "retro:puzzles": "node --experimental-strip-types scripts/search-winning-puzzles.mjs",
+    "search:long-mates": "node --experimental-strip-types scripts/reinforced-long-mate-search.mjs",
+    "scan:long-mates": "node --experimental-strip-types scripts/scan-mate-neighborhood.mjs",
     "generate:survival": "node --experimental-strip-types scripts/generate-puzzle-candidates.mjs",
     "evolve:survival": "node --experimental-strip-types scripts/evolve-puzzle-candidates.mjs"
   },

@@ -46,6 +46,12 @@ export interface SearchResult {
   stats: SearchStats;
 }
 
+export interface LimitedSearchResult extends SearchResult {
+  aborted: boolean;
+  completedDepth: number;
+  nodeBudget: number;
+}
+
 export interface MoveVerdict {
   move: Move;
   safe: boolean;
@@ -153,7 +159,10 @@ interface SearchContext {
   killers: Map<number, string[]>;
   history: Map<string, number>;
   stats: Omit<SearchStats, 'elapsedMs'>;
+  nodeBudget: number;
 }
+
+class SearchBudgetExceeded extends Error {}
 
 const ORTHOGONAL: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const DIAGONAL: ReadonlyArray<readonly [number, number]> = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
@@ -482,12 +491,13 @@ export function formatMove(state: GameState, move: Move): string {
   return `${PIECE_MARK[piece.type]} ${squareName(...move.from)}${move.captureId ? '×' : '–'}${squareName(...move.to)}${move.promotion ? '=♛' : ''}`;
 }
 
-function createSearchContext(): SearchContext {
+function createSearchContext(nodeBudget = Infinity): SearchContext {
   return {
     table: new Map(),
     killers: new Map(),
     history: new Map(),
     stats: { nodes: 0, cutoffs: 0, tableHits: 0, generatedMoves: 0 },
+    nodeBudget,
   };
 }
 
@@ -553,6 +563,7 @@ function negamax(
   searchPly: number,
   context: SearchContext,
 ): { score: number; move: Move | null; pv: Move[] } {
+  if (context.stats.nodes >= context.nodeBudget) throw new SearchBudgetExceeded();
   context.stats.nodes += 1;
   const key = `${positionKey(state)}|p${searchPly}`;
   const cached = context.table.get(key);
@@ -627,6 +638,42 @@ export function searchForcedOutcome(state: GameState, depth: number): SearchResu
     pv: result.pv,
     matePlies,
     mateMoves: matePlies === null ? null : Math.ceil(matePlies / 2),
+    stats: { ...context.stats, elapsedMs: performance.now() - started },
+  };
+}
+
+/** Bounded variant for candidate generation. An aborted result is heuristic-only
+ * and must never be treated as a proof; accepted puzzles are rerun without a
+ * budget through the exact verification path. */
+export function searchForcedOutcomeLimited(state: GameState, depth: number, nodeBudget = 250_000): LimitedSearchResult {
+  const started = performance.now();
+  const boundedDepth = Number.isFinite(depth) ? Math.max(1, Math.trunc(depth)) : 1;
+  const boundedBudget = Number.isFinite(nodeBudget) ? Math.max(1, Math.trunc(nodeBudget)) : 250_000;
+  const context = createSearchContext(boundedBudget);
+  let result: { score: number; move: Move | null; pv: Move[] } = { score: 0, move: null, pv: [] };
+  let completedDepth = 0;
+  let aborted = false;
+  for (let currentDepth = 1; currentDepth <= boundedDepth; currentDepth += 1) {
+    try {
+      result = negamax(state, currentDepth, -MATE_SCORE, MATE_SCORE, 0, context);
+      completedDepth = currentDepth;
+      if (isMateScore(result.score)) break;
+    } catch (error) {
+      if (!(error instanceof SearchBudgetExceeded)) throw error;
+      aborted = true;
+      break;
+    }
+  }
+  const matePlies = mateDistanceFromScore(result.score);
+  return {
+    score: result.score,
+    bestMove: result.move,
+    pv: result.pv,
+    matePlies,
+    mateMoves: matePlies === null ? null : Math.ceil(matePlies / 2),
+    aborted,
+    completedDepth,
+    nodeBudget: boundedBudget,
     stats: { ...context.stats, elapsedMs: performance.now() - started },
   };
 }

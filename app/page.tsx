@@ -76,6 +76,17 @@ function factionName(side: Puzzle['human']): string {
   return side === 'xiangqi' ? '中国象棋' : '国际象棋';
 }
 
+function openingNotice(puzzle: Puzzle): string {
+  return `找到第一步唯一胜着，并把 M${puzzle.mateMoves} 最短强胜走到底。`;
+}
+
+function rigiditySummary(puzzle: Puzzle): string {
+  if (puzzle.uniqueWinnerTurns === puzzle.winnerTurns && puzzle.maxWinningMoves === 1) {
+    return `${puzzle.winnerTurns} 次胜方决策全部唯一`;
+  }
+  return `前 ${puzzle.uniqueWinnerTurns} 次唯一，后续每个节点至多 ${puzzle.maxWinningMoves} 条胜着`;
+}
+
 function buildPv(start: GameState, pv: Move[]): string[] {
   let state = start;
   return pv.map((move) => {
@@ -96,7 +107,7 @@ export default function Home() {
   const [lastMove, setLastMove] = useState<Move | null>(null);
   const [solutionPly, setSolutionPly] = useState(0);
   const [status, setStatus] = useState<PlayStatus>('ready');
-  const [notice, setNotice] = useState('找到第一步唯一胜着，并把 M2 强制胜法走到底。');
+  const [notice, setNotice] = useState(() => openingNotice(PUZZLES[0]));
   const [proof, setProof] = useState<string[]>([]);
   const [showHint, setShowHint] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
@@ -135,7 +146,7 @@ export default function Home() {
     setLastMove(null);
     setSolutionPly(0);
     setStatus('ready');
-    setNotice('找到第一步唯一胜着，并把 M2 强制胜法走到底。');
+    setNotice(openingNotice(next));
     setProof([]);
     setShowHint(false);
     setVerification(null);
@@ -150,7 +161,7 @@ export default function Home() {
     setLastMove(null);
     setSolutionPly(0);
     setStatus('ready');
-    setNotice('局面已复原。重新寻找连续两次唯一胜着。');
+    setNotice(`局面已复原。重新寻找 M${puzzle.mateMoves} 的第一步唯一胜着。`);
     setProof([]);
     setShowHint(false);
   }
@@ -171,7 +182,7 @@ export default function Home() {
       const defenseKey = puzzle.expectedPrincipalVariationKeys[solutionPly + 1];
       if (!defenseKey) {
         setStatus('correct');
-        setNotice(`${label}。M${puzzle.mateMoves} 强制终局完成，两次胜方决策均为唯一。`);
+        setNotice(`${label}。M${puzzle.mateMoves} 强制终局完成；${rigiditySummary(puzzle)}。`);
         return;
       }
 
@@ -191,7 +202,9 @@ export default function Home() {
         setSolutionPly(solutionPly + 2);
         setProof([...nextProof, defenseLabel]);
         setStatus('ready');
-        setNotice(`${defenseLabel}。守方已作最长抵抗；现在找到第二次唯一胜着。`);
+        const nextWinnerTurn = Math.floor(solutionPly / 2) + 2;
+        const nextTask = nextWinnerTurn <= puzzle.uniqueWinnerTurns ? '唯一胜着' : '主证明线继续着';
+        setNotice(`${defenseLabel}。守方已作最长抵抗；现在寻找胜方第 ${nextWinnerTurn} 着：${nextTask}。`);
       }, 360);
       return;
     }
@@ -210,7 +223,10 @@ export default function Home() {
         setLastMove(result.bestMove);
       }
       setStatus('wrong');
-      setNotice(`强制胜证明在第 ${Math.floor(solutionPly / 2) + 1} 次决策处断裂；此着不再保证七层窗口内获胜。`);
+      const winnerTurn = Math.floor(solutionPly / 2) + 1;
+      setNotice(winnerTurn <= puzzle.uniqueWinnerTurns
+        ? `强制胜证明在第 ${winnerTurn} 次决策处断裂；此着不再保证 H${puzzle.proofDepth} 窗口内获胜。`
+        : `此着不在存档的最长抵抗主证明线上；这不等于它在更深层必负。`);
     }, 80);
   }
 
@@ -279,6 +295,7 @@ export default function Home() {
       depth: puzzle.proofDepth,
       winnerTurns: puzzle.winnerTurns,
       uniqueWinnerTurns: puzzle.uniqueWinnerTurns,
+      maxWinningMoves: puzzle.maxWinningMoves,
     });
   }
 
@@ -381,7 +398,7 @@ export default function Home() {
           <div className="analysis-title"><p className="eyebrow">威胁扫描</p><span>{puzzle.motif}</span></div>
           <div className="threat">
             <span>+M{puzzle.mateMoves}</span>
-            <div><small>执子方已证明</small><strong>两回合强制获胜</strong></div>
+            <div><small>执子方已证明</small><strong>{puzzle.mateMoves} 回合内强制终局</strong></div>
           </div>
           <dl>
             <div><dt>当前合法着</dt><dd>{legalMoves.length}</dd></div>
@@ -393,7 +410,7 @@ export default function Home() {
 
           <div className="horizon-preview">
             <div className="horizon-preview-title">
-              <small>首着可证性 / H1—H7</small>
+              <small>首着可证性 / H1—H{puzzle.proofDepth}</small>
               <button type="button" onClick={() => setPanel('horizons')}>逐着展开 ↗</button>
             </div>
             <HorizonFunnel counts={verification?.horizons ?? puzzle.expectedHorizonCounts} compact />
@@ -514,7 +531,7 @@ function HorizonPanel({
     <>
       <p className="eyebrow">MEASURABLE MOVE HORIZONS</p>
       <h2 id="modal-title">逐着预测漏斗</h2>
-      <p className="modal-intro">H1 表示只看当前首着，H2 再加入守方一着，依次扩展到 H7。绿色和红色都必须有终局证明；灰色只是“当前深度未决”，绝不冒充可行或胜着。</p>
+      <p className="modal-intro">H1 表示只看当前首着，H2 再加入守方一着，本题依次扩展到 H{puzzle.proofDepth}。绿色和红色都必须有终局证明；灰色只是“当前深度未决”，绝不冒充可行或胜着。</p>
 
       <div className="horizon-summary">
         <article><small>合法首着</small><strong>{rootTotal}</strong></article>
@@ -580,7 +597,7 @@ function RulesPanel() {
         <article><span>03</span><h3>飞将</h3><p>帅与西洋王处在同一纵线且中间无子时，视为帅沿纵线攻击西洋王；任何一方都不能制造或保留非法照面。</p></article>
         <article><span>04</span><h3>残局简化</h3><p>关闭王车易位、吃过路兵、兵的首次两格与长将长捉裁决；西洋兵抵达南端自动升后。当前短杀题不启用重复与自然限着。</p></article>
       </div>
-      <div className="definition-box"><strong>什么叫这里的“强胜残局”？</strong><p>双方仅余 2–5 子（王/将计入）。执子方可在公开的七层窗口内强制终局；首着以及沿全部防守分支到达的第二次决策都只有一条继续获胜的走法。</p></div>
+      <div className="definition-box"><strong>什么叫这里的“强胜残局”？</strong><p>双方仅余 2–5 子（王/将计入）。执子方可在题目公开的 H7 或 H9 窗口内强制终局；根节点恰好一条胜着，并逐题声明前几次胜方决策必须唯一、后续最多允许几条等价胜着。</p></div>
       <div className="source-links">
         <a href="https://rcc.fide.com/fide-laws-of-chess_fulltexthtml/" target="_blank" rel="noreferrer">FIDE 国际象棋规则 ↗</a>
         <a href="https://www.wxf-xiangqi.org/images/wxf-rules/2018_World_XiangQi_Rules_English2018.pdf" target="_blank" rel="noreferrer">WXF 世界象棋规则 ↗</a>
@@ -599,6 +616,7 @@ function ResearchPanel() {
         <article><div><span>国际象棋基线</span><b>4,389 ★</b></div><h3>jhlywa/chess.js</h3><p>BSD-2-Clause · 固定提交 d43e668</p><p>461 / 464 测试通过；3 项失败仅为 Windows 换行符差异。Perft 与将死测试均通过，生产依赖漏洞为 0。</p><a href="https://github.com/jhlywa/chess.js" target="_blank" rel="noreferrer">查看仓库 ↗</a></article>
         <article><div><span>中国象棋基线</span><b>243 ★</b></div><h3>xqbase/xqwlight</h3><p>GPL-2.0 · 固定提交 6221733</p><p>本地跑过 240 个残局：7,809 个生成着与合法着基线一致，7,207 着通过自将过滤，718 着形成将军。</p><a href="https://github.com/xqbase/xqwlight" target="_blank" rel="noreferrer">查看仓库 ↗</a></article>
       </div>
+      <div className="definition-box"><strong>M5 长杀搜索结果</strong><p>12 题共覆盖 232 个合法首着；4 枚 M5 在 H1–H8 均无强杀，H9 才各出现一条唯一根胜着。奖励策略只排列候选，最终仍由无损全分支搜索证明。本轮也找到 H11 的 M6，但唯一性抛光最低仍为两条根胜着，因此没有冒充正式题。</p></div>
       <h3 className="section-label">可借鉴的网站</h3>
       <div className="precedent-list">
         <a href="https://www.pychess.org/" target="_blank" rel="noreferrer"><strong>PyChess</strong><span>多棋种、AI 与自定义变体</span>↗</a>

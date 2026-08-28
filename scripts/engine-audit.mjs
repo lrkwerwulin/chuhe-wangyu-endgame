@@ -11,6 +11,7 @@ import {
   moveKey,
   proveForcedWinRigidity,
   searchForcedOutcome,
+  searchForcedOutcomeLimited,
   terminalState,
   validateState,
 } from '../lib/hybrid-engine.ts';
@@ -124,6 +125,23 @@ test('mate-only alpha-beta search finds a one-ply finish', () => {
   assert(result.score >= MATE_SCORE - 1);
   assert.equal(result.mateMoves, 1);
   assert(result.bestMove);
+});
+
+test('bounded search aborts safely and matches exact search with enough budget', () => {
+  const state = base([
+    piece('mate-rook', 'chess', 'rook', 4, 7),
+    piece('left-rook', 'chess', 'rook', 3, 8),
+    piece('right-rook', 'chess', 'rook', 5, 8),
+  ], 'chess', [4, 9], [0, 0]);
+  const aborted = searchForcedOutcomeLimited(state, 3, 1);
+  assert.equal(aborted.aborted, true);
+  assert.equal(aborted.completedDepth, 0);
+  const exact = searchForcedOutcome(state, 3);
+  const bounded = searchForcedOutcomeLimited(state, 3, 10_000);
+  assert.equal(bounded.aborted, false);
+  assert.equal(bounded.score, exact.score);
+  assert.equal(bounded.matePlies, exact.matePlies);
+  assert.equal(moveKey(bounded.bestMove), moveKey(exact.bestMove));
 });
 
 test('state validator catches overlap and illegal Xiangqi zones', () => {
