@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import {
   MATE_SCORE,
+  analyseForcedWinMoves,
   analyseSurvivalMoves,
   applyMove,
   generateLegalMoves,
   generatePseudoMoves,
   isInCheck,
   moveKey,
+  proveForcedWinRigidity,
   searchForcedOutcome,
   terminalState,
   validateState,
@@ -25,6 +27,17 @@ const base = (extras = [], turn = 'xiangqi', general = [4, 9], king = [0, 0]) =>
 
 const tests = [];
 const test = (name, run) => tests.push({ name, run });
+
+function bruteMateOnlyNegamax(state, depth, searchPly = 0) {
+  const moves = generateLegalMoves(state);
+  if (moves.length === 0) return -MATE_SCORE + searchPly;
+  if (depth === 0) return 0;
+  let best = -MATE_SCORE;
+  for (const move of moves) {
+    best = Math.max(best, -bruteMateOnlyNegamax(applyMove(state, move), depth - 1, searchPly + 1));
+  }
+  return best;
+}
 
 test('general and advisor remain inside the south palace', () => {
   const generalState = base([], 'xiangqi', [4, 8]);
@@ -130,6 +143,48 @@ test('survival classifier returns a complete partition', () => {
   const analysis = analyseSurvivalMoves(state, 2);
   assert.equal(analysis.safe.length + analysis.losing.length, analysis.legal.length);
   assert(analysis.stats.nodes > 0);
+});
+
+test('forced-win classifier proves a unique two-move win', () => {
+  const state = base([
+    piece('proof-rook', 'chess', 'rook', 3, 0),
+    piece('block-left', 'xiangqi', 'soldier', 3, 9),
+    piece('block-right', 'xiangqi', 'soldier', 5, 9),
+    piece('interposing-elephant', 'xiangqi', 'elephant', 6, 5),
+  ], 'chess', [4, 9], [0, 0]);
+  const analysis = analyseForcedWinMoves(state, 7);
+  assert.equal(analysis.winning.length, 1);
+  assert.equal(moveKey(analysis.winning[0].move), '30-40');
+  assert.equal(analysis.winning[0].mateMoves, 2);
+
+  const proof = proveForcedWinRigidity(state, 7, 2, 2, 1);
+  assert.equal(proof.forcedWin, true);
+  assert.equal(proof.rigid, true);
+  assert.equal(proof.widestDecision, 1);
+  assert.deepEqual(proof.pv.map(moveKey), ['30-40', '65-47', '40-47']);
+});
+
+test('PVS result matches independent full-width minimax', () => {
+  const positions = [
+    base([
+      piece('mate-rook', 'chess', 'rook', 4, 7),
+      piece('left-rook', 'chess', 'rook', 3, 8),
+      piece('right-rook', 'chess', 'rook', 5, 8),
+    ], 'chess', [4, 9], [0, 0]),
+    base([
+      piece('proof-rook', 'chess', 'rook', 3, 0),
+      piece('block-left', 'xiangqi', 'soldier', 3, 9),
+      piece('block-right', 'xiangqi', 'soldier', 5, 9),
+      piece('interposing-elephant', 'xiangqi', 'elephant', 6, 5),
+    ], 'chess', [4, 9], [0, 0]),
+    base([
+      piece('threat', 'chess', 'rook', 4, 6),
+      piece('guard', 'xiangqi', 'chariot', 4, 8),
+    ], 'xiangqi', [4, 9], [0, 0]),
+  ];
+  for (const state of positions) {
+    assert.equal(searchForcedOutcome(state, 3).score, bruteMateOnlyNegamax(state, 3));
+  }
 });
 
 let passed = 0;

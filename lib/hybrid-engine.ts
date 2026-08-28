@@ -63,6 +63,42 @@ export interface SurvivalAnalysis {
   stats: SearchStats;
 }
 
+export interface WinningMoveVerdict {
+  move: Move;
+  wins: boolean;
+  matePlies: number | null;
+  mateMoves: number | null;
+  pv: Move[];
+  score: number;
+}
+
+export interface ForcedWinAnalysis {
+  forcedWin: boolean;
+  depth: number;
+  legal: WinningMoveVerdict[];
+  winning: WinningMoveVerdict[];
+  nonWinning: WinningMoveVerdict[];
+  best: WinningMoveVerdict | null;
+  stats: SearchStats;
+}
+
+export interface ForcedWinRigidity {
+  forcedWin: boolean;
+  rigid: boolean;
+  depth: number;
+  matePlies: number | null;
+  mateMoves: number | null;
+  pv: Move[];
+  rootWinningMoves: Move[];
+  winnerTurns: number;
+  uniqueWinnerTurns: number;
+  maxWinningMoves: number;
+  decisionNodes: number;
+  widestDecision: number;
+  defenseBranches: number;
+  stats: SearchStats;
+}
+
 interface TableEntry {
   depth: number;
   score: number;
@@ -73,6 +109,8 @@ interface TableEntry {
 
 interface SearchContext {
   table: Map<string, TableEntry>;
+  killers: Map<number, string[]>;
+  history: Map<string, number>;
   stats: Omit<SearchStats, 'elapsedMs'>;
 }
 
@@ -403,33 +441,87 @@ export function formatMove(state: GameState, move: Move): string {
   return `${PIECE_MARK[piece.type]} ${squareName(...move.from)}${move.captureId ? '×' : '–'}${squareName(...move.to)}${move.promotion ? '=♛' : ''}`;
 }
 
-function orderedChildren(state: GameState, moves: Move[]): Array<{ move: Move; child: GameState; priority: number }> {
+function createSearchContext(): SearchContext {
+  return {
+    table: new Map(),
+    killers: new Map(),
+    history: new Map(),
+    stats: { nodes: 0, cutoffs: 0, tableHits: 0, generatedMoves: 0 },
+  };
+}
+
+function isMateScore(score: number): boolean {
+  return Math.abs(score) > MATE_SCORE / 2;
+}
+
+function mateDistanceFromScore(score: number): number | null {
+  return isMateScore(score) ? MATE_SCORE - Math.abs(score) : null;
+}
+
+function historyKey(state: GameState, move: Move): string {
+  const piece = state.pieces.find((candidate) => candidate.id === move.pieceId);
+  return `${state.turn}:${piece?.type ?? move.pieceId}:${moveKey(move)}`;
+}
+
+function orderedChildren(
+  state: GameState,
+  moves: Move[],
+  context: SearchContext,
+  searchPly: number,
+  preferredMove: Move | null = null,
+): Array<{ move: Move; child: GameState; priority: number }> {
+  const preferredKey = preferredMove ? moveKey(preferredMove) : null;
+  const killers = context.killers.get(searchPly) ?? [];
   return moves.map((move) => {
     const captured = move.captureId ? state.pieces.find((piece) => piece.id === move.captureId) : undefined;
+    const attacker = state.pieces.find((piece) => piece.id === move.pieceId);
     const child = applyMove(state, move);
     const givesCheck = isInCheck(child, child.turn);
-    const priority = (givesCheck ? 20_000 : 0) + (captured ? 10_000 + PIECE_VALUE[captured.type] : 0) + (move.promotion ? 8_000 : 0);
+    const key = moveKey(move);
+    const capturePriority = captured
+      ? 100_000 + PIECE_VALUE[captured.type] * 16 - (attacker ? PIECE_VALUE[attacker.type] : 0)
+      : 0;
+    const killerIndex = move.captureId ? -1 : killers.indexOf(key);
+    const killerPriority = killerIndex === 0 ? 80_000 : killerIndex === 1 ? 70_000 : 0;
+    const priority = (
+      (preferredKey === key ? 1_000_000 : 0)
+      + (givesCheck ? 200_000 : 0)
+      + capturePriority
+      + (move.promotion ? 90_000 : 0)
+      + killerPriority
+      + (context.history.get(historyKey(state, move)) ?? 0)
+    );
     return { move, child, priority };
   }).sort((a, b) => b.priority - a.priority || moveKey(a.move).localeCompare(moveKey(b.move)));
+}
+
+function recordCutoff(state: GameState, move: Move, depth: number, searchPly: number, context: SearchContext): void {
+  if (move.captureId || move.promotion) return;
+  const key = moveKey(move);
+  const killers = context.killers.get(searchPly) ?? [];
+  if (killers[0] !== key) context.killers.set(searchPly, [key, killers[0]].filter(Boolean).slice(0, 2));
+  const keyForHistory = historyKey(state, move);
+  context.history.set(keyForHistory, Math.min(60_000, (context.history.get(keyForHistory) ?? 0) + depth * depth));
 }
 
 function negamax(
   state: GameState,
   depth: number,
   alphaInput: number,
-  beta: number,
+  betaInput: number,
   searchPly: number,
   context: SearchContext,
 ): { score: number; move: Move | null; pv: Move[] } {
   context.stats.nodes += 1;
-  const key = `${positionKey(state)}|d${depth}|p${searchPly}`;
+  const key = `${positionKey(state)}|p${searchPly}`;
   const cached = context.table.get(key);
   let alpha = alphaInput;
+  let beta = betaInput;
   if (cached && cached.depth >= depth) {
     context.stats.tableHits += 1;
     if (cached.flag === 'exact') return { score: cached.score, move: cached.bestMove, pv: cached.pv };
     if (cached.flag === 'lower') alpha = Math.max(alpha, cached.score);
-    if (cached.flag === 'upper' && cached.score <= alpha) return { score: cached.score, move: cached.bestMove, pv: cached.pv };
+    if (cached.flag === 'upper') beta = Math.min(beta, cached.score);
     if (alpha >= beta) return { score: cached.score, move: cached.bestMove, pv: cached.pv };
   }
 
@@ -438,13 +530,27 @@ function negamax(
   if (moves.length === 0) return { score: -MATE_SCORE + searchPly, move: null, pv: [] };
   if (depth === 0) return { score: 0, move: null, pv: [] };
 
-  const originalAlpha = alpha;
+  const originalAlpha = alphaInput;
+  const originalBeta = betaInput;
   let bestScore = -MATE_SCORE;
   let bestMove: Move | null = null;
   let bestPv: Move[] = [];
-  for (const { move, child } of orderedChildren(state, moves)) {
-    const reply = negamax(child, depth - 1, -beta, -alpha, searchPly + 1, context);
-    const score = -reply.score;
+  const children = orderedChildren(state, moves, context, searchPly, cached?.bestMove ?? null);
+  for (let index = 0; index < children.length; index += 1) {
+    const { move, child } = children[index];
+    let reply;
+    let score;
+    if (index === 0) {
+      reply = negamax(child, depth - 1, -beta, -alpha, searchPly + 1, context);
+      score = -reply.score;
+    } else {
+      reply = negamax(child, depth - 1, -alpha - 1, -alpha, searchPly + 1, context);
+      score = -reply.score;
+      if (score > alpha && score < beta) {
+        reply = negamax(child, depth - 1, -beta, -alpha, searchPly + 1, context);
+        score = -reply.score;
+      }
+    }
     if (score > bestScore) {
       bestScore = score;
       bestMove = move;
@@ -453,29 +559,213 @@ function negamax(
     alpha = Math.max(alpha, score);
     if (alpha >= beta) {
       context.stats.cutoffs += 1;
+      recordCutoff(state, move, depth, searchPly, context);
       break;
     }
   }
 
-  const flag: TableEntry['flag'] = bestScore <= originalAlpha ? 'upper' : bestScore >= beta ? 'lower' : 'exact';
-  context.table.set(key, { depth, score: bestScore, flag, bestMove, pv: bestPv });
+  const flag: TableEntry['flag'] = bestScore <= originalAlpha ? 'upper' : bestScore >= originalBeta ? 'lower' : 'exact';
+  if (!cached || depth >= cached.depth || flag === 'exact') {
+    context.table.set(key, { depth, score: bestScore, flag, bestMove, pv: bestPv });
+  }
   return { score: bestScore, move: bestMove, pv: bestPv };
 }
 
 export function searchForcedOutcome(state: GameState, depth: number): SearchResult {
   const started = performance.now();
-  const context: SearchContext = {
-    table: new Map(),
-    stats: { nodes: 0, cutoffs: 0, tableHits: 0, generatedMoves: 0 },
-  };
-  const result = negamax(state, depth, -MATE_SCORE, MATE_SCORE, 0, context);
-  const matePlies = Math.abs(result.score) >= MATE_SCORE - depth - 1 ? MATE_SCORE - Math.abs(result.score) : null;
+  const context = createSearchContext();
+  let result: { score: number; move: Move | null; pv: Move[] } = { score: 0, move: null, pv: [] };
+  for (let currentDepth = 1; currentDepth <= Math.max(1, depth); currentDepth += 1) {
+    result = negamax(state, currentDepth, -MATE_SCORE, MATE_SCORE, 0, context);
+    if (isMateScore(result.score)) break;
+  }
+  const matePlies = mateDistanceFromScore(result.score);
   return {
     score: result.score,
     bestMove: result.move,
     pv: result.pv,
     matePlies,
     mateMoves: matePlies === null ? null : Math.ceil(matePlies / 2),
+    stats: { ...context.stats, elapsedMs: performance.now() - started },
+  };
+}
+
+function analyseForcedWinMovesWithContext(
+  state: GameState,
+  depth: number,
+  context: SearchContext,
+): Omit<ForcedWinAnalysis, 'stats'> {
+  const legalMoves = generateLegalMoves(state);
+  context.stats.generatedMoves += legalMoves.length;
+  const legal = orderedChildren(state, legalMoves, context, 0).map(({ move, child }): WinningMoveVerdict => {
+    const reply = negamax(child, Math.max(0, depth - 1), -MATE_SCORE, MATE_SCORE, 1, context);
+    const score = -reply.score;
+    const matePlies = score > 0 ? mateDistanceFromScore(score) : null;
+    return {
+      move,
+      wins: matePlies !== null,
+      matePlies,
+      mateMoves: matePlies === null ? null : Math.ceil(matePlies / 2),
+      pv: [move, ...reply.pv],
+      score,
+    };
+  });
+  const winning = legal
+    .filter((item) => item.wins)
+    .sort((a, b) => (a.matePlies ?? Infinity) - (b.matePlies ?? Infinity) || moveKey(a.move).localeCompare(moveKey(b.move)));
+  return {
+    forcedWin: winning.length > 0,
+    depth,
+    legal,
+    winning,
+    nonWinning: legal.filter((item) => !item.wins),
+    best: winning[0] ?? null,
+  };
+}
+
+export function analyseForcedWinMoves(state: GameState, depth = 9): ForcedWinAnalysis {
+  const started = performance.now();
+  const context = createSearchContext();
+  const analysis = analyseForcedWinMovesWithContext(state, Math.max(1, depth), context);
+  return {
+    ...analysis,
+    stats: { ...context.stats, elapsedMs: performance.now() - started },
+  };
+}
+
+function winnerHasForcedMate(score: number, sideToMove: Side, winner: Side): boolean {
+  if (!isMateScore(score)) return false;
+  return sideToMove === winner ? score > 0 : score < 0;
+}
+
+interface RigidityVisit {
+  rigid: boolean;
+  decisionNodes: number;
+  widestDecision: number;
+  defenseBranches: number;
+}
+
+export function proveForcedWinRigidity(
+  state: GameState,
+  depth = 9,
+  winnerTurns = 2,
+  uniqueWinnerTurns = winnerTurns,
+  maxWinningMoves = 1,
+): ForcedWinRigidity {
+  const started = performance.now();
+  const boundedDepth = Math.max(1, depth);
+  const boundedWinnerTurns = Math.max(1, winnerTurns);
+  const boundedUniqueTurns = Math.max(0, Math.min(boundedWinnerTurns, uniqueWinnerTurns));
+  const boundedMaxWinningMoves = Math.max(1, maxWinningMoves);
+  const winner = state.turn;
+  const context = createSearchContext();
+  const root = negamax(state, boundedDepth, -MATE_SCORE, MATE_SCORE, 0, context);
+  const matePlies = root.score > 0 ? mateDistanceFromScore(root.score) : null;
+  const rootAnalysis = analyseForcedWinMovesWithContext(state, boundedDepth, context);
+  const minimumPliesForTurns = boundedWinnerTurns * 2 - 1;
+  const memo = new Map<string, RigidityVisit>();
+
+  const visit = (
+    current: GameState,
+    remainingDepth: number,
+    searchPly: number,
+    winnerTurnIndex: number,
+  ): RigidityVisit => {
+    if (winnerTurnIndex >= boundedWinnerTurns) {
+      return { rigid: true, decisionNodes: 0, widestDecision: 0, defenseBranches: 0 };
+    }
+    if (remainingDepth <= 0) {
+      return { rigid: false, decisionNodes: 0, widestDecision: 0, defenseBranches: 0 };
+    }
+    const memoKey = `${positionKey(current)}|d${remainingDepth}|w${winnerTurnIndex}`;
+    const memoized = memo.get(memoKey);
+    if (memoized) return memoized;
+
+    const moves = generateLegalMoves(current);
+    context.stats.generatedMoves += moves.length;
+    if (moves.length === 0) {
+      const terminal: RigidityVisit = { rigid: false, decisionNodes: 0, widestDecision: 0, defenseBranches: 0 };
+      memo.set(memoKey, terminal);
+      return terminal;
+    }
+
+    const children = orderedChildren(current, moves, context, searchPly);
+    const proven = children.map(({ move, child }) => {
+      const result = negamax(child, remainingDepth - 1, -MATE_SCORE, MATE_SCORE, searchPly + 1, context);
+      return { move, child, result, winnerWins: winnerHasForcedMate(result.score, child.turn, winner) };
+    });
+
+    if (current.turn === winner) {
+      const winning = proven.filter((item) => item.winnerWins);
+      const limit = winnerTurnIndex < boundedUniqueTurns ? 1 : boundedMaxWinningMoves;
+      if (winning.length === 0 || winning.length > limit) {
+        const failed: RigidityVisit = {
+          rigid: false,
+          decisionNodes: 1,
+          widestDecision: winning.length,
+          defenseBranches: 0,
+        };
+        memo.set(memoKey, failed);
+        return failed;
+      }
+
+      let selected: RigidityVisit | null = null;
+      for (const option of winning) {
+        const continuation = visit(option.child, remainingDepth - 1, searchPly + 1, winnerTurnIndex + 1);
+        if (continuation.rigid) {
+          selected = continuation;
+          break;
+        }
+        selected ??= continuation;
+      }
+      const result: RigidityVisit = {
+        rigid: Boolean(selected?.rigid),
+        decisionNodes: 1 + (selected?.decisionNodes ?? 0),
+        widestDecision: Math.max(winning.length, selected?.widestDecision ?? 0),
+        defenseBranches: selected?.defenseBranches ?? 0,
+      };
+      memo.set(memoKey, result);
+      return result;
+    }
+
+    let aggregate: RigidityVisit = { rigid: true, decisionNodes: 0, widestDecision: 0, defenseBranches: proven.length };
+    for (const option of proven) {
+      if (!option.winnerWins) {
+        aggregate = { ...aggregate, rigid: false };
+        break;
+      }
+      const continuation = visit(option.child, remainingDepth - 1, searchPly + 1, winnerTurnIndex);
+      aggregate.decisionNodes += continuation.decisionNodes;
+      aggregate.widestDecision = Math.max(aggregate.widestDecision, continuation.widestDecision);
+      aggregate.defenseBranches += continuation.defenseBranches;
+      if (!continuation.rigid) {
+        aggregate.rigid = false;
+        break;
+      }
+    }
+    memo.set(memoKey, aggregate);
+    return aggregate;
+  };
+
+  const rootHasLongEnoughMate = matePlies !== null && matePlies >= minimumPliesForTurns;
+  const rigidity = rootHasLongEnoughMate
+    ? visit(state, boundedDepth, 0, 0)
+    : { rigid: false, decisionNodes: 0, widestDecision: rootAnalysis.winning.length, defenseBranches: 0 };
+
+  return {
+    forcedWin: matePlies !== null,
+    rigid: rootHasLongEnoughMate && rigidity.rigid,
+    depth: boundedDepth,
+    matePlies,
+    mateMoves: matePlies === null ? null : Math.ceil(matePlies / 2),
+    pv: root.pv,
+    rootWinningMoves: rootAnalysis.winning.map((item) => item.move),
+    winnerTurns: boundedWinnerTurns,
+    uniqueWinnerTurns: boundedUniqueTurns,
+    maxWinningMoves: boundedMaxWinningMoves,
+    decisionNodes: rigidity.decisionNodes,
+    widestDecision: rigidity.widestDecision,
+    defenseBranches: rigidity.defenseBranches,
     stats: { ...context.stats, elapsedMs: performance.now() - started },
   };
 }

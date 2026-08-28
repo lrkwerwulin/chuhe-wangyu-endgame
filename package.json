@@ -24,8 +24,11 @@
     "typecheck": "tsc --noEmit",
     "audit:engine": "node --experimental-strip-types scripts/engine-audit.mjs",
     "verify:puzzles": "node --experimental-strip-types scripts/verify-puzzles.mjs",
-    "generate:puzzles": "node --experimental-strip-types scripts/generate-puzzle-candidates.mjs",
-    "evolve:puzzles": "node --experimental-strip-types scripts/evolve-puzzle-candidates.mjs"
+    "search:puzzles": "node --experimental-strip-types scripts/random-winning-puzzles.mjs",
+    "evolve:puzzles": "node --experimental-strip-types scripts/evolve-winning-puzzles.mjs",
+    "retro:puzzles": "node --experimental-strip-types scripts/search-winning-puzzles.mjs",
+    "generate:survival": "node --experimental-strip-types scripts/generate-puzzle-candidates.mjs",
+    "evolve:survival": "node --experimental-strip-types scripts/evolve-puzzle-candidates.mjs"
   },
   "dependencies": {
     "next": "16.3.3",

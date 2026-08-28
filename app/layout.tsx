@@ -6,7 +6,7 @@ const sans = Noto_Sans_SC({ variable: '--font-sans', subsets: ['latin'], weight:
 const serif = Noto_Serif_SC({ variable: '--font-serif', subsets: ['latin'], weight: ['600', '700', '900'] });
 const siteUrl = new URL('https://chuhe-wangyu-endgame.lrk-wer.chatgpt.site');
 const title = '楚河·王域｜象棋 VS 国际象棋残局实验室';
-const description = '在 9×10 混合棋盘上破解只有一到两步生路的跨棋种残局。';
+const description = '在 9×10 混合棋盘上破解经全分支搜索证明、连续胜着唯一的象棋 VS 国际象棋强胜残局。';
 const socialImage = new URL('/og.png', siteUrl).toString();
 
 export const metadata: Metadata = {

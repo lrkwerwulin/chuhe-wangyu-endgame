@@ -50,18 +50,19 @@
 
 ## 本项目验证
 
-- `node --experimental-strip-types scripts/engine-audit.mjs`：11 项混合规则单元审计。
-- `node --experimental-strip-types scripts/verify-puzzles.mjs`：对 16 题逐题穷举七层（对手最多四次行动），验证每题只有 1–2 条生路，其余合法着全部强制负。
-- `node --experimental-strip-types scripts/generate-puzzle-candidates.mjs --count=4 --seed=17`：从短杀母题出发随机添子，先用 3 ply 预筛，再用 7 ply 复证；以合法选择数、反驳深度、解答棋子数和子力规模组成启发式质量分，并在象棋/国际象棋执棋方之间平衡取样。启发式只用于发现和排序候选，不参与最终胜负裁决。
-- `node --experimental-strip-types scripts/evolve-puzzle-candidates.mjs --count=6 --seed=20260830`：从已验证题目出发，对棋子位置和类型做 1–3 次可复现突变；先过滤非法局面和低分支局面，再进行 3 ply 预筛与 7 ply 证明。质量分额外奖励安静解、较深反驳和不同棋子共同解题。
+- `node --experimental-strip-types scripts/engine-audit.mjs`：13 项混合规则与强胜搜索单元审计，其中包含独立全宽 minimax 对 PVS 结果的交叉检查。
+- `node --experimental-strip-types scripts/verify-puzzles.mjs`：对 8 题逐题执行七层根着分类与刚性复证；每题均为 M2，183 个合法首着中只有 8 条可证明强胜，并且沿全部防守分支到达的第二次胜方决策仍唯一。
+- `node --experimental-strip-types scripts/random-winning-puzzles.mjs --count=6 --seed=77`：在 2v4、3v4、3v5 空间内随机生成合法布局，用 3–5 ply mate-only 搜索预筛，再以七层全分支证明检查胜着唯一性。
+- `node --experimental-strip-types scripts/evolve-winning-puzzles.mjs --count=6`：系统枚举已知强胜母题的单子位移，寻找保持或延长杀程的新结构。
+- `node --experimental-strip-types scripts/search-winning-puzzles.mjs --count=6 --seed=17`：从短杀母题做无吃子合法逆向回溯，偏好低分支防守节点，再进行正向复证。
 - `node scripts/audit-xqwlight.mjs`：复跑 xqwlight 固定语料基线。
 - `pnpm exec tsc --noEmit` 与 `pnpm run build`：类型和部署构建。
 
-求解器使用 mate-only negamax、alpha-beta 剪枝、置换表，以及将军/吃子/升变优先的着法排序。深度为 7 ply；非终局叶子一律记 0，因此“强制终局”不会被静态局面分冒充。
+求解器使用 mate-only negamax、迭代加深、PVS、alpha-beta 剪枝、跨根着共享置换表、杀手着与历史启发。置换表着、将军、吃子和升变优先；没有使用 null-move、futility 或可能漏解的选择性裁剪。深度为 7 ply；非终局叶子一律记 0，因此“强制获胜”不会被静态子力分冒充。
 
-2026-08-28 的第二批计算先产生 12 个候选，再剔除仅靠无关添子形成的重复构型，最终加入 4 题：`西宫截车`、`同吃异命`、`左翼双门`、`东翼马饵`。四题合计搜索 421,973 个节点；其中三题为唯一解、一题为双解，最慢的错误着在对手第 3 次行动时终局。
+当前 8 题的一次完整根着分类与刚性复证合计访问 1,143,959 个节点。随机阶段以种子 77、78、79 检查了 8,230 个通过初始合法性过滤的布局，其中 182 个进入七层刚性复证；系统演化阶段另生成 1,824 个单子位移布局。最终只保留战术结构有差异、主变化合法且自动复证稳定的题目。
 
-同日第三批以三个随机种子进行演化搜索，75 个局面进入七层复证，得到 66 个合格候选。去重和人工检查后加入 6 题：`十阶反将`、`横断二线`、`静马第二门`、`双子夺轴`、`象路迷城`、`三格追车`。六题合计搜索 1,372,627 个节点，共 57 个合法首着、8 条生路；最深错误线在对手第 4 次行动时终局。
+此前 v0.1 的“避败残局”搜索器仍以 `generate:survival` 与 `evolve:survival` 命令保留，便于复现实验历史，但其题目资格已经被 v0.2 的“执子方强胜且连续胜着唯一”取代。
 
 ## 同类网站调查
 
@@ -72,4 +73,4 @@
 - [Xiangqi.com Puzzles](https://www.xiangqi.com/xiangqi-puzzle)：象棋残局创建和练习。
 - [社区中的 Chess vs Xiangqi 构想](https://www.reddit.com/r/AnarchyChess/comments/1i9w7xl)：说明军队对阵概念有人讨论，但不是可验证残局产品。
 
-公开检索没有发现一个专门以 2v4、3v4、3v5 “象棋军队 vs 国际象棋军队”，并逐着公开 1–2 条生路证明为核心的现成网站；这是检索结论，不是不可能存在的证明。
+公开检索没有发现一个专门以 2v4、3v4、3v5 “象棋军队 vs 国际象棋军队”，并逐着公开“执子方强胜且连续胜着唯一”证明为核心的现成网站；这是检索结论，不是不可能存在的证明。

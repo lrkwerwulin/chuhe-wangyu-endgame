@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  analyseSurvivalMoves,
   applyMove,
   formatMove,
   generateLegalMoves,
@@ -10,6 +9,7 @@ import {
   moveKey,
   pieceAt,
   PIECE_MARK,
+  proveForcedWinRigidity,
   searchForcedOutcome,
   squareName,
   type GameState,
@@ -22,7 +22,11 @@ type Panel = 'rules' | 'research' | null;
 
 interface Verification {
   legal: number;
-  safe: number;
+  winning: number;
+  mateMoves: number | null;
+  rigid: boolean;
+  decisionNodes: number;
+  defenseBranches: number;
   nodes: number;
   cutoffs: number;
   tableHits: number;
@@ -45,13 +49,16 @@ function buildPv(start: GameState, pv: Move[]): string[] {
 }
 
 export default function Home() {
+  const actionToken = useRef(0);
+  const verificationToken = useRef(0);
   const [puzzleIndex, setPuzzleIndex] = useState(0);
   const puzzle = PUZZLES[puzzleIndex];
   const [state, setState] = useState<GameState>(() => cloneState(PUZZLES[0].state));
   const [selected, setSelected] = useState<string | null>(null);
   const [lastMove, setLastMove] = useState<Move | null>(null);
+  const [solutionPly, setSolutionPly] = useState(0);
   const [status, setStatus] = useState<PlayStatus>('ready');
-  const [notice, setNotice] = useState('找到一着，让对手无法在四步内强制终局。');
+  const [notice, setNotice] = useState('找到第一步唯一胜着，并把 M2 强制胜法走到底。');
   const [proof, setProof] = useState<string[]>([]);
   const [showHint, setShowHint] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
@@ -74,14 +81,17 @@ export default function Home() {
   }, []);
 
   function loadPuzzle(index: number): void {
+    actionToken.current += 1;
+    verificationToken.current += 1;
     const nextIndex = (index + PUZZLES.length) % PUZZLES.length;
     const next = PUZZLES[nextIndex];
     setPuzzleIndex(nextIndex);
     setState(cloneState(next.state));
     setSelected(null);
     setLastMove(null);
+    setSolutionPly(0);
     setStatus('ready');
-    setNotice('找到一着，让对手无法在四步内强制终局。');
+    setNotice('找到第一步唯一胜着，并把 M2 强制胜法走到底。');
     setProof([]);
     setShowHint(false);
     setVerification(null);
@@ -89,41 +99,73 @@ export default function Home() {
   }
 
   function resetPuzzle(): void {
+    actionToken.current += 1;
     setState(cloneState(puzzle.state));
     setSelected(null);
     setLastMove(null);
+    setSolutionPly(0);
     setStatus('ready');
-    setNotice('局面已复原。重新寻找生路。');
+    setNotice('局面已复原。重新寻找连续两次唯一胜着。');
     setProof([]);
     setShowHint(false);
   }
 
   function makePlayerMove(move: Move): void {
+    const token = actionToken.current + 1;
+    actionToken.current = token;
     const label = formatMove(state, move);
     const next = applyMove(state, move);
-    const survives = puzzle.expectedSafeMoveKeys.includes(moveKey(move));
+    const expectedMoveKey = puzzle.expectedPrincipalVariationKeys[solutionPly];
+    const preservesWin = moveKey(move) === expectedMoveKey;
     setState(next);
     setLastMove(move);
     setSelected(null);
-    if (survives) {
-      setStatus('correct');
-      setNotice(`${label}。杀网被拆开——这条路通过了七层证明。`);
-      setProof([label]);
+    if (preservesWin) {
+      const nextProof = [...proof, label];
+      setProof(nextProof);
+      const defenseKey = puzzle.expectedPrincipalVariationKeys[solutionPly + 1];
+      if (!defenseKey) {
+        setStatus('correct');
+        setNotice(`${label}。M${puzzle.mateMoves} 强制终局完成，两次胜方决策均为唯一。`);
+        return;
+      }
+
+      setStatus('thinking');
+      setNotice(`${label} 保持强制胜势。守方正在选择证明线中的最强抵抗…`);
+      window.setTimeout(() => {
+        if (actionToken.current !== token) return;
+        const defense = generateLegalMoves(next).find((candidate) => moveKey(candidate) === defenseKey);
+        if (!defense) {
+          setStatus('wrong');
+          setNotice('存档主变化与当前引擎不一致；请使用“本机重新验证”复查此题。');
+          return;
+        }
+        const defenseLabel = formatMove(next, defense);
+        setState(applyMove(next, defense));
+        setLastMove(defense);
+        setSolutionPly(solutionPly + 2);
+        setProof([...nextProof, defenseLabel]);
+        setStatus('ready');
+        setNotice(`${defenseLabel}。守方已作最长抵抗；现在找到第二次唯一胜着。`);
+      }, 360);
       return;
     }
 
     setStatus('thinking');
-    setNotice(`${label} 看似可走，求解器正在给出强制反驳…`);
+    setProof([label]);
+    setNotice(`${label} 不能维持已证明的强制胜利，求解器正在给出最佳反证…`);
     window.setTimeout(() => {
-      const result = searchForcedOutcome(next, puzzle.horizonMoves * 2 - 1);
+      if (actionToken.current !== token) return;
+      const remainingDepth = Math.max(1, puzzle.proofDepth - solutionPly - 1);
+      const result = searchForcedOutcome(next, remainingDepth);
       const line = buildPv(next, result.pv);
-      setProof(line);
+      setProof([label, ...line]);
       if (result.bestMove) {
         setState(applyMove(next, result.bestMove));
         setLastMove(result.bestMove);
       }
       setStatus('wrong');
-      setNotice(`落入 M${result.mateMoves ?? puzzle.horizonMoves} 杀网。下方主变化给出可复查证明。`);
+      setNotice(`强制胜证明在第 ${Math.floor(solutionPly / 2) + 1} 次决策处断裂；此着不再保证七层窗口内获胜。`);
     }, 80);
   }
 
@@ -144,13 +186,26 @@ export default function Home() {
 
   function verifyPuzzle(): void {
     if (verifying) return;
+    const token = verificationToken.current + 1;
+    verificationToken.current = token;
     setVerifying(true);
     setVerification(null);
     window.setTimeout(() => {
-      const report = analyseSurvivalMoves(puzzle.state, puzzle.horizonMoves);
+      if (verificationToken.current !== token) return;
+      const report = proveForcedWinRigidity(
+        puzzle.state,
+        puzzle.proofDepth,
+        puzzle.winnerTurns,
+        puzzle.uniqueWinnerTurns,
+        1,
+      );
       setVerification({
-        legal: report.legal.length,
-        safe: report.safe.length,
+        legal: generateLegalMoves(puzzle.state).length,
+        winning: report.rootWinningMoves.length,
+        mateMoves: report.mateMoves,
+        rigid: report.rigid,
+        decisionNodes: report.decisionNodes,
+        defenseBranches: report.defenseBranches,
         nodes: report.stats.nodes,
         cutoffs: report.stats.cutoffs,
         tableHits: report.stats.tableHits,
@@ -160,7 +215,7 @@ export default function Home() {
     }, 80);
   }
 
-  const resultLabel = status === 'correct' ? '破局成功' : status === 'wrong' ? '落入杀网' : status === 'thinking' ? '正在推演' : '轮到你';
+  const resultLabel = status === 'correct' ? '强制胜利' : status === 'wrong' ? '证明断裂' : status === 'thinking' ? '正在推演' : '轮到你';
 
   return (
     <main className="shell">
@@ -180,7 +235,7 @@ export default function Home() {
         <aside className="brief-card">
           <div className="puzzle-heading">
             <p className="eyebrow">残局 {puzzle.number} · {puzzle.material}</p>
-            <span>{puzzle.expectedSafeMoveKeys.length === 1 ? '唯一着' : '双解'}</span>
+            <span>连续唯一</span>
           </div>
           <h1>{puzzle.title}</h1>
           <p className="lede">{puzzle.subtitle}</p>
@@ -257,13 +312,14 @@ export default function Home() {
         <aside className="analysis-card">
           <div className="analysis-title"><p className="eyebrow">威胁扫描</p><span>{puzzle.motif}</span></div>
           <div className="threat">
-            <span>−M{puzzle.horizonMoves}</span>
-            <div><small>走错即进入</small><strong>四步强制终局</strong></div>
+            <span>+M{puzzle.mateMoves}</span>
+            <div><small>执子方已证明</small><strong>两回合强制获胜</strong></div>
           </div>
           <dl>
             <div><dt>当前合法着</dt><dd>{legalMoves.length}</dd></div>
-            <div><dt>初始生路</dt><dd className="accent">{puzzle.expectedSafeMoveKeys.length}</dd></div>
-            <div><dt>证明深度</dt><dd>7 ply</dd></div>
+            <div><dt>根节点胜着</dt><dd className="accent">{puzzle.expectedWinningMoveKeys.length}</dd></div>
+            <div><dt>连续唯一</dt><dd>{puzzle.uniqueWinnerTurns}/{puzzle.winnerTurns} 次</dd></div>
+            <div><dt>复证窗口</dt><dd>{puzzle.proofDepth} ply</dd></div>
           </dl>
 
           {proof.length > 0 ? (
@@ -275,26 +331,27 @@ export default function Home() {
             <div className="line-preview concealed">
               <small>主变化 / PRINCIPAL VARIATION</small>
               <p>先落子，证明线随后展开。</p>
-              <p>生路不会在分析面板中提前泄露。</p>
+              <p>唯一胜着不会在分析面板中提前泄露。</p>
             </div>
           )}
 
           <button className="verify-button" type="button" onClick={verifyPuzzle} disabled={verifying}>
-            {verifying ? '正在穷举七层博弈树…' : verification ? '重新验证此题' : '本机重新验证此题'}
+            {verifying ? `正在复证 ${puzzle.proofDepth} 层全分支树…` : verification ? '重新验证此题' : '本机重新验证此题'}
           </button>
           {verification && (
             <div className="verification" aria-live="polite">
-              <strong>证明一致：{verification.safe} 条生路</strong>
+              <strong>{verification.rigid ? `证明一致：${verification.winning}/${verification.legal} 胜着，M${verification.mateMoves}` : '证明已发生变化'}</strong>
+              <span>{verification.decisionNodes.toLocaleString()} 个胜方决策点 · {verification.defenseBranches.toLocaleString()} 条防守边</span>
               <span>{verification.nodes.toLocaleString()} 节点 · {verification.cutoffs.toLocaleString()} 次剪枝</span>
               <span>{verification.tableHits.toLocaleString()} 次置换命中 · {verification.elapsedMs} ms</span>
             </div>
           )}
-          <p className="engine-note">α–β 剪枝 · 置换表 · 将军/吃子优先排序 · 无云端 AI</p>
+          <p className="engine-note">PVS / α–β · 置换表 · 杀手着 · 历史启发 · 严格终局证明</p>
         </aside>
       </section>
 
       <footer>
-        <span>残局定义：含王/将在内的 {puzzle.material.toLowerCase()} 少子力局面</span>
+        <span>残局定义：{puzzle.material.toLowerCase()} 少子力 · M{puzzle.mateMoves} · 前 {puzzle.uniqueWinnerTurns} 次胜方决策唯一</span>
         <button type="button" onClick={() => setPanel('rules')}>为什么这里不是“吃王”？</button>
       </footer>
 
@@ -320,9 +377,9 @@ function RulesPanel() {
         <article><span>01</span><h3>棋盘与走法</h3><p>统一使用象棋的 9×10 交叉点棋盘。象棋子保留九宫、河界、蹩马腿、塞象眼与炮架；国际棋子在全盘按原方向移动。</p></article>
         <article><span>02</span><h3>王法</h3><p>王与帅都不能被实际吃掉，也不能走进受攻击点。无合法着即负：被将军是将死，未被将军则按本混合规则“困毙负”。</p></article>
         <article><span>03</span><h3>飞将</h3><p>帅与西洋王处在同一纵线且中间无子时，视为帅沿纵线攻击西洋王；任何一方都不能制造或保留非法照面。</p></article>
-        <article><span>04</span><h3>残局简化</h3><p>关闭王车易位、吃过路兵、兵的首次两格与长将长捉裁决；西洋兵抵达南端自动升后。四步题不启用重复与自然限着。</p></article>
+        <article><span>04</span><h3>残局简化</h3><p>关闭王车易位、吃过路兵、兵的首次两格与长将长捉裁决；西洋兵抵达南端自动升后。当前短杀题不启用重复与自然限着。</p></article>
       </div>
-      <div className="definition-box"><strong>什么叫这里的“残局”？</strong><p>双方仅余 2–5 子（王/将计入）。轮到玩家时只有 1–2 着能避开对手在最多四个回合内的强制终局；其它每一合法着都由完全搜索给出反驳线。</p></div>
+      <div className="definition-box"><strong>什么叫这里的“强胜残局”？</strong><p>双方仅余 2–5 子（王/将计入）。执子方可在公开的七层窗口内强制终局；首着以及沿全部防守分支到达的第二次决策都只有一条继续获胜的走法。</p></div>
       <div className="source-links">
         <a href="https://rcc.fide.com/fide-laws-of-chess_fulltexthtml/" target="_blank" rel="noreferrer">FIDE 国际象棋规则 ↗</a>
         <a href="https://www.wxf-xiangqi.org/images/wxf-rules/2018_World_XiangQi_Rules_English2018.pdf" target="_blank" rel="noreferrer">WXF 世界象棋规则 ↗</a>
@@ -349,7 +406,7 @@ function ResearchPanel() {
         <a href="https://chessperiment.app/en/editor" target="_blank" rel="noreferrer"><strong>Chessperiment</strong><span>浏览器变体编辑器</span>↗</a>
         <a href="https://www.xiangqi.com/xiangqi-puzzle" target="_blank" rel="noreferrer"><strong>Xiangqi.com</strong><span>象棋残局创建与练习</span>↗</a>
       </div>
-      <p className="research-note">调查中找到了“象棋军队对国际棋军队”的社区构想，也找到了通用变体平台；尚未发现专门围绕 2v4 / 3v5、并公开证明“只有 1–2 条生路”的同类网页。这是基于公开检索结果的判断，不是不存在性证明。</p>
+      <p className="research-note">调查中找到了“象棋军队对国际棋军队”的社区构想，也找到了通用变体平台；尚未发现专门围绕 2v4 / 3v5、并公开复证“执子方强胜且连续胜着唯一”的同类网页。这是基于公开检索结果的判断，不是不存在性证明。</p>
     </>
   );
 }
