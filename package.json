@@ -24,6 +24,7 @@
     "typecheck": "tsc --noEmit",
     "audit:engine": "node --experimental-strip-types scripts/engine-audit.mjs",
     "verify:puzzles": "node --experimental-strip-types scripts/verify-puzzles.mjs",
+    "measure:horizons": "node --experimental-strip-types scripts/measure-move-horizons.mjs",
     "search:puzzles": "node --experimental-strip-types scripts/random-winning-puzzles.mjs",
     "evolve:puzzles": "node --experimental-strip-types scripts/evolve-winning-puzzles.mjs",
     "retro:puzzles": "node --experimental-strip-types scripts/search-winning-puzzles.mjs",

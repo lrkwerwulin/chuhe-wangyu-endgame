@@ -50,8 +50,9 @@
 
 ## 本项目验证
 
-- `node --experimental-strip-types scripts/engine-audit.mjs`：13 项混合规则与强胜搜索单元审计，其中包含独立全宽 minimax 对 PVS 结果的交叉检查。
-- `node --experimental-strip-types scripts/verify-puzzles.mjs`：对 8 题逐题执行七层根着分类与刚性复证；每题均为 M2，183 个合法首着中只有 8 条可证明强胜，并且沿全部防守分支到达的第二次胜方决策仍唯一。
+- `node --experimental-strip-types scripts/engine-audit.mjs`：14 项混合规则与强胜搜索单元审计，其中包含独立全宽 minimax 对 PVS 结果、以及 H1–H3 逐着分类的交叉检查。
+- `node --experimental-strip-types scripts/verify-puzzles.mjs`：对 8 题逐题执行 H1–H7 根着分类与刚性复证；每题均为 M2，183 个合法首着中只有 8 条可证明强胜，并且沿全部防守分支到达的第二次胜方决策仍唯一。
+- `node --experimental-strip-types scripts/measure-move-horizons.mjs`：输出每条首着的立即回应数、吃子/将军/升变标记、H1–H7 三态序列、首次得证层与逐层搜索成本。
 - `node --experimental-strip-types scripts/random-winning-puzzles.mjs --count=6 --seed=77`：在 2v4、3v4、3v5 空间内随机生成合法布局，用 3–5 ply mate-only 搜索预筛，再以七层全分支证明检查胜着唯一性。
 - `node --experimental-strip-types scripts/evolve-winning-puzzles.mjs --count=6`：系统枚举已知强胜母题的单子位移，寻找保持或延长杀程的新结构。
 - `node --experimental-strip-types scripts/search-winning-puzzles.mjs --count=6 --seed=17`：从短杀母题做无吃子合法逆向回溯，偏好低分支防守节点，再进行正向复证。
@@ -60,7 +61,11 @@
 
 求解器使用 mate-only negamax、迭代加深、PVS、alpha-beta 剪枝、跨根着共享置换表、杀手着与历史启发。置换表着、将军、吃子和升变优先；没有使用 null-move、futility 或可能漏解的选择性裁剪。深度为 7 ply；非终局叶子一律记 0，因此“强制获胜”不会被静态子力分冒充。
 
-当前 8 题的一次完整根着分类与刚性复证合计访问 1,143,959 个节点。随机阶段以种子 77、78、79 检查了 8,230 个通过初始合法性过滤的布局，其中 182 个进入七层刚性复证；系统演化阶段另生成 1,824 个单子位移布局。最终只保留战术结构有差异、主变化合法且自动复证稳定的题目。
+逐层分析使用 `win / loss / unresolved` 三态，而不是把没搜到反驳的着法叫作“可行”。H1 是首着本身，H2 包含守方一着，H3 包含胜方第二着。强制胜或强制负一旦在 Hn 成立，就可严格继承到更深窗口；实现据此跳过后续重复搜索，只有未决着法继续加深。每个残局的静态漏斗与立即回应边统计均写入题库，并由复核脚本重新计算后逐项比较。
+
+H1–H7 聚合漏斗依次为 `0/0/183`、`0/0/183`、`8/0/175`、`8/29/146`、`8/29/146`、`8/44/131`、`8/44/131`（已证胜 / 已证负 / 未决）。183 条首着落下后共有 4,355 条立即回应边，范围 1–54，平均 23.80。逐层扫描访问 412,871 个节点，产生 103,143 次剪枝和 29,782 次置换命中；加入连续唯一性复证后，整库验证访问 1,001,990 个节点、完成 331,445 次剪枝并命中置换表 104,666 次。节点成本会随排序实现变化，三态结论则由测试锁定。
+
+随机阶段以种子 77、78、79 检查了 8,230 个通过初始合法性过滤的布局，其中 182 个进入七层刚性复证；系统演化阶段另生成 1,824 个单子位移布局。最终只保留战术结构有差异、主变化合法且自动复证稳定的题目。
 
 此前 v0.1 的“避败残局”搜索器仍以 `generate:survival` 与 `evolve:survival` 命令保留，便于复现实验历史，但其题目资格已经被 v0.2 的“执子方强胜且连续胜着唯一”取代。
 

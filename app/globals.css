@@ -373,6 +373,30 @@ button:focus-visible, a:focus-visible { outline: 2px solid #e6c27a; outline-offs
 .analysis-card dd { margin: 0; color: #d4caba; font-family: Georgia, serif; font-size: 12px; }
 .analysis-card dd.accent { color: #ddc07c; }
 
+.horizon-preview { margin-top: 13px; padding: 10px; border: 1px solid #ffffff0e; background: #0b0e0c80; }
+.horizon-preview-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.horizon-preview-title small { color: #747a73; font-size: 8px; letter-spacing: .08em; }
+.horizon-preview-title button { padding: 0; border: 0; background: none; color: #b69b63; font-size: 8px; cursor: pointer; }
+.horizon-preview-title button:hover { color: #e4ca8c; }
+.horizon-funnel { display: flex; flex-direction: column; gap: 7px; padding: 16px; border: 1px solid #ffffff10; background: #0a0d0b91; }
+.horizon-funnel.compact { gap: 4px; padding: 0; border: 0; background: none; }
+.horizon-row { display: grid; grid-template-columns: 30px minmax(100px, 1fr) 100px; align-items: center; gap: 10px; }
+.horizon-row > b { color: #bdb6a7; font-family: Georgia, serif; font-size: 10px; font-weight: 400; }
+.horizon-bar { height: 9px; display: flex; overflow: hidden; background: #323732; }
+.horizon-bar i { display: block; height: 100%; }
+.horizon-bar i.win { background: #77a47e; }
+.horizon-bar i.loss { background: #b7554c; }
+.horizon-bar i.unresolved { background: #454b46; }
+.horizon-row > small { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; color: #777d77; font-family: Georgia, serif; font-size: 9px; text-align: right; }
+.horizon-row em { color: inherit; font-style: normal; }
+.horizon-row em.win, .horizon-legend .win, .horizon-summary strong.win { color: #8dba94; }
+.horizon-row em.loss, .horizon-legend .loss, .horizon-summary strong.loss { color: #ce6c62; }
+.horizon-legend { display: flex; justify-content: flex-end; gap: 14px; margin-top: 5px; color: #777d77; font-size: 8px; }
+.horizon-funnel.compact .horizon-row { grid-template-columns: 23px 1fr 57px; gap: 6px; }
+.horizon-funnel.compact .horizon-bar { height: 5px; }
+.horizon-funnel.compact .horizon-row > small { gap: 2px; font-size: 7px; }
+.horizon-funnel.compact .horizon-legend { gap: 8px; margin-top: 3px; font-size: 7px; }
+
 .line-preview { min-height: 105px; margin-top: 15px; padding: 12px; background: #0b0e0c; border-left: 2px solid var(--red); }
 .line-preview small { color: #70756e; font-size: 8px; letter-spacing: .08em; }
 .line-preview p { display: flex; align-items: center; gap: 8px; margin: 7px 0 0; color: #c1b8aa; font-size: 10px; }
@@ -395,6 +419,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid #e6c27a; outline-offs
 .verification { display: flex; flex-direction: column; gap: 3px; margin-top: 9px; padding: 9px; background: #20312470; }
 .verification strong { color: #93bd99; font-size: 9px; }
 .verification span { color: #747c74; font-family: Georgia, serif; font-size: 8px; }
+.verification-error { margin: 9px 0 0; padding: 9px; border-left: 2px solid #b7554c; background: #3b1d1a4d; color: #d88b83; font-size: 9px; line-height: 1.6; }
 .engine-note { margin: 10px 0 0; color: #60655f; font-size: 8px; line-height: 1.5; letter-spacing: .05em; }
 
 footer {
@@ -460,6 +485,31 @@ footer button:hover { color: #d2c7b4; }
 .precedent-list strong { color: #bdbcb3; }
 .research-note { margin: 18px 0 0; color: #696e67; font-size: 9px; line-height: 1.7; }
 
+.horizon-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+.horizon-summary article { display: flex; flex-direction: column; gap: 6px; padding: 13px; border: 1px solid #ffffff0e; background: #0a0d0b70; }
+.horizon-summary small { color: #747a73; font-size: 8px; }
+.horizon-summary strong { color: #d9d0bf; font-family: Georgia, serif; font-size: 21px; font-weight: 400; }
+.reply-profile { margin: 8px 0 0; color: #777d77; font-family: Georgia, serif; font-size: 9px; text-align: right; }
+.horizon-actions { display: flex; align-items: center; gap: 15px; margin: 15px 0; }
+.horizon-actions .primary-action { width: auto; min-width: 220px; }
+.horizon-actions .primary-action:disabled { cursor: wait; opacity: .7; }
+.horizon-actions p { margin: 0; color: #747a73; font-size: 9px; line-height: 1.6; }
+.horizon-cost { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 9px; }
+.horizon-cost span { padding: 6px 8px; border: 1px solid #ffffff0d; color: #92978f; font-family: Georgia, serif; font-size: 9px; }
+.move-table-wrap { overflow-x: auto; border: 1px solid #ffffff0e; }
+.move-prediction-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 9px; }
+.move-prediction-table th, .move-prediction-table td { padding: 8px 7px; border-bottom: 1px solid #ffffff09; color: #858b84; text-align: center; white-space: nowrap; }
+.move-prediction-table thead th { position: sticky; top: 0; z-index: 1; background: #151a16; color: #b3b4ab; font-weight: 500; }
+.move-prediction-table tbody th { min-width: 112px; color: #c2baa9; font-weight: 400; text-align: left; }
+.move-prediction-table tbody th span, .move-prediction-table tbody th small { display: block; }
+.move-prediction-table tbody th small { margin-top: 2px; color: #666d66; font-family: Georgia, serif; font-size: 7px; }
+.move-prediction-table tr.final-win { background: #24402a3b; }
+.move-prediction-table tr.final-loss { background: #54211d29; }
+.move-prediction-table td.outcome-win { color: #92c399; font-weight: 700; }
+.move-prediction-table td.outcome-loss { color: #d57970; font-weight: 700; }
+.move-prediction-table td.outcome-unresolved { color: #59605a; }
+.horizon-footnote { margin: 10px 0 0; color: #686e68; font-size: 8px; line-height: 1.7; }
+
 @keyframes pulse { to { opacity: .35; } }
 @keyframes fade-in { from { opacity: 0; } }
 
@@ -490,6 +540,10 @@ footer button:hover { color: #d2c7b4; }
   .modal { max-height: 88vh; padding: 34px 20px 28px; }
   .rule-grid, .repo-grid, .precedent-list { grid-template-columns: 1fr; }
   .precedent-list a { grid-template-columns: 100px 1fr auto; }
+  .horizon-summary { grid-template-columns: 1fr 1fr; }
+  .horizon-row { grid-template-columns: 26px minmax(80px, 1fr) 82px; gap: 7px; }
+  .horizon-actions { align-items: stretch; flex-direction: column; }
+  .horizon-actions .primary-action { width: 100%; min-width: 0; }
 }
 
 @media (max-width: 390px) {

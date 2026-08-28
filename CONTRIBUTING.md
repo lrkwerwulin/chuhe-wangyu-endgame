@@ -20,6 +20,8 @@ pnpm dev
 - 双方棋子总数符合 2 VS 4、3 VS 4 或 3 VS 5；
 - 执子方能在公开深度内强制终局；
 - 七层窗口内根节点恰好存在一条胜着；
+- `expectedHorizonCounts` 与 H1–H7 的已证胜/已证负/未决数量一致；
+- `expectedReplyStats` 与全部首着落下后的立即合法回应数一致；
 - 沿守方全部合法分支到达的第二次胜方决策也恰好一条胜着；
 - 存档主变化合法并以对方将死或困毙负结束；
 - 标题、提示和母题说明不提前泄露全部答案；
@@ -29,6 +31,7 @@ pnpm dev
 
 ```bash
 pnpm verify:puzzles
+pnpm measure:horizons -- --puzzle=<题目 id> --moves
 ```
 
 ## 提交前检查

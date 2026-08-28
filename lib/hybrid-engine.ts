@@ -82,6 +82,47 @@ export interface ForcedWinAnalysis {
   stats: SearchStats;
 }
 
+export type HorizonOutcome = 'win' | 'loss' | 'unresolved';
+
+export interface MoveHorizonSample {
+  horizon: number;
+  outcome: HorizonOutcome;
+  score: number;
+  matePlies: number | null;
+  mateMoves: number | null;
+  pv: Move[];
+  carried: boolean;
+}
+
+export interface MoveHorizonVerdict {
+  move: Move;
+  capture: boolean;
+  givesCheck: boolean;
+  promotion: boolean;
+  replyCount: number;
+  firstProvenHorizon: number | null;
+  finalOutcome: HorizonOutcome;
+  horizons: MoveHorizonSample[];
+}
+
+export interface HorizonSummary {
+  horizon: number;
+  wins: number;
+  losses: number;
+  unresolved: number;
+  newlyWins: number;
+  newlyLosses: number;
+  searchedMoves: number;
+  stats: SearchStats;
+}
+
+export interface MoveHorizonAnalysis {
+  maxDepth: number;
+  legal: MoveHorizonVerdict[];
+  horizons: HorizonSummary[];
+  stats: SearchStats;
+}
+
 export interface ForcedWinRigidity {
   forcedWin: boolean;
   rigid: boolean;
@@ -629,6 +670,104 @@ export function analyseForcedWinMoves(state: GameState, depth = 9): ForcedWinAna
   const analysis = analyseForcedWinMovesWithContext(state, Math.max(1, depth), context);
   return {
     ...analysis,
+    stats: { ...context.stats, elapsedMs: performance.now() - started },
+  };
+}
+
+function horizonOutcome(score: number): HorizonOutcome {
+  if (!isMateScore(score)) return 'unresolved';
+  return score > 0 ? 'win' : 'loss';
+}
+
+/**
+ * Classify every legal root move at each ply horizon. A non-terminal leaf is
+ * deliberately scored as unresolved: this function never promotes a heuristic
+ * evaluation to a proof. Once a move is proven win/loss, that result is carried
+ * forward because a forcing terminal line remains valid at every deeper bound.
+ */
+export function analyseMoveHorizons(state: GameState, maxDepth = 7): MoveHorizonAnalysis {
+  const started = performance.now();
+  const boundedDepth = Math.max(1, maxDepth);
+  const context = createSearchContext();
+  const legalMoves = generateLegalMoves(state);
+  context.stats.generatedMoves += legalMoves.length;
+  const legal = orderedChildren(state, legalMoves, context, 0).map(({ move, child }): MoveHorizonVerdict => ({
+    move,
+    capture: Boolean(move.captureId),
+    givesCheck: isInCheck(child, child.turn),
+    promotion: Boolean(move.promotion),
+    replyCount: generateLegalMoves(child).length,
+    firstProvenHorizon: null,
+    finalOutcome: 'unresolved',
+    horizons: [],
+  }));
+  const children = new Map(legal.map((item) => [moveKey(item.move), applyMove(state, item.move)]));
+  const horizons: HorizonSummary[] = [];
+
+  for (let horizon = 1; horizon <= boundedDepth; horizon += 1) {
+    const horizonStarted = performance.now();
+    const before = { ...context.stats };
+    let searchedMoves = 0;
+    let newlyWins = 0;
+    let newlyLosses = 0;
+
+    for (const item of legal) {
+      const previous = item.horizons.at(-1);
+      if (previous && previous.outcome !== 'unresolved') {
+        item.horizons.push({ ...previous, horizon, carried: true });
+        continue;
+      }
+
+      const child = children.get(moveKey(item.move));
+      if (!child) continue;
+      searchedMoves += 1;
+      const reply = negamax(child, horizon - 1, -MATE_SCORE, MATE_SCORE, 1, context);
+      const score = -reply.score;
+      const outcome = horizonOutcome(score);
+      const matePlies = mateDistanceFromScore(score);
+      item.horizons.push({
+        horizon,
+        outcome,
+        score,
+        matePlies,
+        mateMoves: matePlies === null ? null : Math.ceil(matePlies / 2),
+        pv: [item.move, ...reply.pv],
+        carried: false,
+      });
+      if (outcome !== 'unresolved' && item.firstProvenHorizon === null) {
+        item.firstProvenHorizon = horizon;
+        if (outcome === 'win') newlyWins += 1;
+        else newlyLosses += 1;
+      }
+      item.finalOutcome = outcome;
+    }
+
+    const wins = legal.filter((item) => item.horizons.at(-1)?.outcome === 'win').length;
+    const losses = legal.filter((item) => item.horizons.at(-1)?.outcome === 'loss').length;
+    const after = context.stats;
+    horizons.push({
+      horizon,
+      wins,
+      losses,
+      unresolved: legal.length - wins - losses,
+      newlyWins,
+      newlyLosses,
+      searchedMoves,
+      stats: {
+        nodes: after.nodes - before.nodes,
+        cutoffs: after.cutoffs - before.cutoffs,
+        tableHits: after.tableHits - before.tableHits,
+        generatedMoves: after.generatedMoves - before.generatedMoves,
+        elapsedMs: performance.now() - horizonStarted,
+      },
+    });
+  }
+
+  for (const item of legal) item.finalOutcome = item.horizons.at(-1)?.outcome ?? 'unresolved';
+  return {
+    maxDepth: boundedDepth,
+    legal,
+    horizons,
     stats: { ...context.stats, elapsedMs: performance.now() - started },
   };
 }

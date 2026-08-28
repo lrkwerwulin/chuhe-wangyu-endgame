@@ -9,29 +9,66 @@ import {
   moveKey,
   pieceAt,
   PIECE_MARK,
-  proveForcedWinRigidity,
   searchForcedOutcome,
   squareName,
   type GameState,
+  type HorizonOutcome,
   type Move,
 } from '@/lib/hybrid-engine';
 import { PUZZLES, type Puzzle } from '@/lib/puzzles';
 
 type PlayStatus = 'ready' | 'thinking' | 'correct' | 'wrong';
-type Panel = 'rules' | 'research' | null;
+type Panel = 'rules' | 'research' | 'horizons' | null;
 
-interface Verification {
-  legal: number;
-  winning: number;
-  mateMoves: number | null;
-  rigid: boolean;
-  decisionNodes: number;
-  defenseBranches: number;
+interface HorizonMeasure {
+  horizon: number;
+  wins: number;
+  losses: number;
+  unresolved: number;
+  newlyWins: number;
+  newlyLosses: number;
+  searchedMoves: number;
   nodes: number;
   cutoffs: number;
   tableHits: number;
   elapsedMs: number;
 }
+
+interface MovePrediction {
+  key: string;
+  label: string;
+  replies: number;
+  capture: boolean;
+  check: boolean;
+  promotion: boolean;
+  firstProof: number | null;
+  final: HorizonOutcome;
+  outcomes: HorizonOutcome[];
+}
+
+interface Verification {
+  legal: number;
+  winning: number;
+  mateMoves: number | null;
+  rigid: boolean | null;
+  decisionNodes: number | null;
+  defenseBranches: number | null;
+  horizons: HorizonMeasure[];
+  moves: MovePrediction[];
+  horizonNodes: number;
+  horizonCutoffs: number;
+  horizonTableHits: number;
+  horizonElapsedMs: number;
+  proofNodes: number | null;
+  proofCutoffs: number | null;
+  proofTableHits: number | null;
+  proofElapsedMs: number | null;
+}
+
+type WorkerResponse =
+  | { kind: 'horizons'; token: number; report: Omit<Verification, 'rigid' | 'decisionNodes' | 'defenseBranches' | 'proofNodes' | 'proofCutoffs' | 'proofTableHits' | 'proofElapsedMs'> }
+  | { kind: 'complete'; token: number; report: Pick<Verification, 'rigid' | 'decisionNodes' | 'defenseBranches' | 'proofNodes' | 'proofCutoffs' | 'proofTableHits' | 'proofElapsedMs'> }
+  | { kind: 'error'; token: number; message: string };
 
 const cloneState = (state: GameState): GameState => ({ ...state, pieces: state.pieces.map((piece) => ({ ...piece })) });
 
@@ -51,6 +88,7 @@ function buildPv(start: GameState, pv: Move[]): string[] {
 export default function Home() {
   const actionToken = useRef(0);
   const verificationToken = useRef(0);
+  const verificationWorker = useRef<Worker | null>(null);
   const [puzzleIndex, setPuzzleIndex] = useState(0);
   const puzzle = PUZZLES[puzzleIndex];
   const [state, setState] = useState<GameState>(() => cloneState(PUZZLES[0].state));
@@ -64,6 +102,7 @@ export default function Home() {
   const [panel, setPanel] = useState<Panel>(null);
   const [verifying, setVerifying] = useState(false);
   const [verification, setVerification] = useState<Verification | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
 
   const legalMoves = useMemo(() => generateLegalMoves(state), [state]);
   const selectedMoves = useMemo(
@@ -77,12 +116,17 @@ export default function Home() {
       if (event.key === 'Escape') setPanel(null);
     };
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+      verificationWorker.current?.terminate();
+    };
   }, []);
 
   function loadPuzzle(index: number): void {
     actionToken.current += 1;
     verificationToken.current += 1;
+    verificationWorker.current?.terminate();
+    verificationWorker.current = null;
     const nextIndex = (index + PUZZLES.length) % PUZZLES.length;
     const next = PUZZLES[nextIndex];
     setPuzzleIndex(nextIndex);
@@ -95,6 +139,7 @@ export default function Home() {
     setProof([]);
     setShowHint(false);
     setVerification(null);
+    setVerificationError(null);
     setVerifying(false);
   }
 
@@ -190,29 +235,51 @@ export default function Home() {
     verificationToken.current = token;
     setVerifying(true);
     setVerification(null);
-    window.setTimeout(() => {
-      if (verificationToken.current !== token) return;
-      const report = proveForcedWinRigidity(
-        puzzle.state,
-        puzzle.proofDepth,
-        puzzle.winnerTurns,
-        puzzle.uniqueWinnerTurns,
-        1,
-      );
-      setVerification({
-        legal: generateLegalMoves(puzzle.state).length,
-        winning: report.rootWinningMoves.length,
-        mateMoves: report.mateMoves,
-        rigid: report.rigid,
-        decisionNodes: report.decisionNodes,
-        defenseBranches: report.defenseBranches,
-        nodes: report.stats.nodes,
-        cutoffs: report.stats.cutoffs,
-        tableHits: report.stats.tableHits,
-        elapsedMs: Math.round(report.stats.elapsedMs),
-      });
+    setVerificationError(null);
+    verificationWorker.current?.terminate();
+    const worker = new Worker(new URL('./horizon-worker.ts', import.meta.url), { type: 'module' });
+    verificationWorker.current = worker;
+    worker.onmessage = ({ data }: MessageEvent<WorkerResponse>) => {
+      if (data.token !== verificationToken.current) return;
+      if (data.kind === 'horizons') {
+        setVerification({
+          ...data.report,
+          rigid: null,
+          decisionNodes: null,
+          defenseBranches: null,
+          proofNodes: null,
+          proofCutoffs: null,
+          proofTableHits: null,
+          proofElapsedMs: null,
+        });
+        return;
+      }
+      if (data.kind === 'complete') {
+        setVerification((current) => current ? { ...current, ...data.report } : current);
+        setVerifying(false);
+        worker.terminate();
+        verificationWorker.current = null;
+        return;
+      }
+      setVerificationError(data.message);
       setVerifying(false);
-    }, 80);
+      worker.terminate();
+      verificationWorker.current = null;
+    };
+    worker.onerror = () => {
+      if (token !== verificationToken.current) return;
+      setVerificationError('预测线程没有完成；请刷新页面后重试。');
+      setVerifying(false);
+      worker.terminate();
+      verificationWorker.current = null;
+    };
+    worker.postMessage({
+      token,
+      state: puzzle.state,
+      depth: puzzle.proofDepth,
+      winnerTurns: puzzle.winnerTurns,
+      uniqueWinnerTurns: puzzle.uniqueWinnerTurns,
+    });
   }
 
   const resultLabel = status === 'correct' ? '强制胜利' : status === 'wrong' ? '证明断裂' : status === 'thinking' ? '正在推演' : '轮到你';
@@ -227,6 +294,7 @@ export default function Home() {
         <nav aria-label="站点信息">
           <button type="button" onClick={() => setPanel('rules')}>混合规则</button>
           <button type="button" onClick={() => setPanel('research')}>规则与源码审计</button>
+          <button type="button" onClick={() => setPanel('horizons')}>逐层预测</button>
           <span className="status-pill"><i /> 本地求解器</span>
         </nav>
       </header>
@@ -318,9 +386,18 @@ export default function Home() {
           <dl>
             <div><dt>当前合法着</dt><dd>{legalMoves.length}</dd></div>
             <div><dt>根节点胜着</dt><dd className="accent">{puzzle.expectedWinningMoveKeys.length}</dd></div>
+            <div><dt>H2 回应边</dt><dd>{puzzle.expectedReplyStats.edges}</dd></div>
             <div><dt>连续唯一</dt><dd>{puzzle.uniqueWinnerTurns}/{puzzle.winnerTurns} 次</dd></div>
             <div><dt>复证窗口</dt><dd>{puzzle.proofDepth} ply</dd></div>
           </dl>
+
+          <div className="horizon-preview">
+            <div className="horizon-preview-title">
+              <small>首着可证性 / H1—H7</small>
+              <button type="button" onClick={() => setPanel('horizons')}>逐着展开 ↗</button>
+            </div>
+            <HorizonFunnel counts={verification?.horizons ?? puzzle.expectedHorizonCounts} compact />
+          </div>
 
           {proof.length > 0 ? (
             <div className="line-preview">
@@ -336,16 +413,26 @@ export default function Home() {
           )}
 
           <button className="verify-button" type="button" onClick={verifyPuzzle} disabled={verifying}>
-            {verifying ? `正在复证 ${puzzle.proofDepth} 层全分支树…` : verification ? '重新验证此题' : '本机重新验证此题'}
+            {verifying
+              ? verification ? '预测漏斗完成，正在复证连续唯一…' : `正在计算 H1—H${puzzle.proofDepth} 全部首着…`
+              : verification ? '重新计算并验证此题' : '本机计算逐着预测'}
           </button>
           {verification && (
             <div className="verification" aria-live="polite">
-              <strong>{verification.rigid ? `证明一致：${verification.winning}/${verification.legal} 胜着，M${verification.mateMoves}` : '证明已发生变化'}</strong>
-              <span>{verification.decisionNodes.toLocaleString()} 个胜方决策点 · {verification.defenseBranches.toLocaleString()} 条防守边</span>
-              <span>{verification.nodes.toLocaleString()} 节点 · {verification.cutoffs.toLocaleString()} 次剪枝</span>
-              <span>{verification.tableHits.toLocaleString()} 次置换命中 · {verification.elapsedMs} ms</span>
+              <strong>{verification.rigid === null
+                ? `H1—H${puzzle.proofDepth} 已完成：${verification.winning}/${verification.legal} 已证胜着`
+                : verification.rigid ? `证明一致：${verification.winning}/${verification.legal} 胜着，M${verification.mateMoves}` : '证明已发生变化'}</strong>
+              {verification.rigid === null ? (
+                <span>逐层分类已返回；连续唯一性的全分支复证仍在运行。</span>
+              ) : (
+                <span>{verification.decisionNodes?.toLocaleString()} 个胜方决策点 · {verification.defenseBranches?.toLocaleString()} 条防守边</span>
+              )}
+              <span>{verification.horizonNodes.toLocaleString()} 个预测节点 · {verification.horizonCutoffs.toLocaleString()} 次剪枝</span>
+              <span>{verification.horizonTableHits.toLocaleString()} 次置换命中 · {verification.horizonElapsedMs} ms</span>
+              {verification.proofNodes !== null && <span>{verification.proofNodes.toLocaleString()} 个刚性复证节点 · {verification.proofElapsedMs} ms</span>}
             </div>
           )}
+          {verificationError && <p className="verification-error" role="alert">{verificationError}</p>}
           <p className="engine-note">PVS / α–β · 置换表 · 杀手着 · 历史启发 · 严格终局证明</p>
         </aside>
       </section>
@@ -359,11 +446,125 @@ export default function Home() {
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPanel(null); }}>
           <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <button className="modal-close" type="button" onClick={() => setPanel(null)} aria-label="关闭">×</button>
-            {panel === 'rules' ? <RulesPanel /> : <ResearchPanel />}
+            {panel === 'rules' ? <RulesPanel /> : panel === 'research' ? <ResearchPanel /> : (
+              <HorizonPanel
+                puzzle={puzzle}
+                verification={verification}
+                verifying={verifying}
+                error={verificationError}
+                onVerify={verifyPuzzle}
+              />
+            )}
           </section>
         </div>
       )}
     </main>
+  );
+}
+
+function HorizonFunnel({
+  counts,
+  compact = false,
+}: {
+  counts: Array<{ horizon: number; wins: number; losses: number; unresolved: number }>;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`horizon-funnel ${compact ? 'compact' : ''}`}>
+      {counts.map((item) => {
+        const total = item.wins + item.losses + item.unresolved;
+        return (
+          <div className="horizon-row" key={item.horizon}>
+            <b>H{item.horizon}</b>
+            <span
+              className="horizon-bar"
+              role="img"
+              aria-label={`H${item.horizon}：${item.wins} 已证胜，${item.losses} 已证负，${item.unresolved} 未决`}
+            >
+              <i className="win" style={{ width: `${total ? item.wins / total * 100 : 0}%` }} />
+              <i className="loss" style={{ width: `${total ? item.losses / total * 100 : 0}%` }} />
+              <i className="unresolved" style={{ width: `${total ? item.unresolved / total * 100 : 0}%` }} />
+            </span>
+            <small><em className="win">{item.wins}</em><em className="loss">{item.losses}</em><em>{item.unresolved}</em></small>
+          </div>
+        );
+      })}
+      <div className="horizon-legend"><span className="win">已证胜</span><span className="loss">已证负</span><span>未决</span></div>
+    </div>
+  );
+}
+
+function HorizonPanel({
+  puzzle,
+  verification,
+  verifying,
+  error,
+  onVerify,
+}: {
+  puzzle: Puzzle;
+  verification: Verification | null;
+  verifying: boolean;
+  error: string | null;
+  onVerify: () => void;
+}) {
+  const counts = verification?.horizons ?? puzzle.expectedHorizonCounts;
+  const final = counts.at(-1);
+  const rootTotal = counts[0] ? counts[0].wins + counts[0].losses + counts[0].unresolved : 0;
+  return (
+    <>
+      <p className="eyebrow">MEASURABLE MOVE HORIZONS</p>
+      <h2 id="modal-title">逐着预测漏斗</h2>
+      <p className="modal-intro">H1 表示只看当前首着，H2 再加入守方一着，依次扩展到 H7。绿色和红色都必须有终局证明；灰色只是“当前深度未决”，绝不冒充可行或胜着。</p>
+
+      <div className="horizon-summary">
+        <article><small>合法首着</small><strong>{rootTotal}</strong></article>
+        <article><small>H{final?.horizon} 已证胜</small><strong className="win">{final?.wins}</strong></article>
+        <article><small>H{final?.horizon} 已证负</small><strong className="loss">{final?.losses}</strong></article>
+        <article><small>H{final?.horizon} 未决</small><strong>{final?.unresolved}</strong></article>
+      </div>
+      <HorizonFunnel counts={counts} />
+      <p className="reply-profile">{puzzle.expectedReplyStats.edges.toLocaleString()} 条立即回应边 · 每个首着 {puzzle.expectedReplyStats.min}—{puzzle.expectedReplyStats.max} 条回应 · 平均 {puzzle.expectedReplyStats.average}</p>
+
+      <div className="horizon-actions">
+        <button className="primary-action" type="button" onClick={onVerify} disabled={verifying}>
+          {verifying ? verification ? '漏斗已返回，正在复证连续唯一…' : '正在搜索全部首着…' : verification ? '重新计算全部首着' : `运行并显示 ${counts[0]?.unresolved ?? 0} 条逐着记录`}
+        </button>
+        <p>计算在独立线程运行；“结论继承”会跳过已经证明的着法，未决着法继续加深。</p>
+      </div>
+
+      {error && <p className="verification-error" role="alert">{error}</p>}
+      {verification && (
+        <>
+          <div className="horizon-cost">
+            <span>{verification.horizonNodes.toLocaleString()} 节点</span>
+            <span>{verification.horizonCutoffs.toLocaleString()} 剪枝</span>
+            <span>{verification.horizonTableHits.toLocaleString()} 置换命中</span>
+            <span>{verification.horizonElapsedMs} ms</span>
+            {verification.proofNodes !== null && <span>{verification.proofNodes.toLocaleString()} 刚性复证节点</span>}
+            {verification.proofCutoffs !== null && <span>{verification.proofCutoffs.toLocaleString()} 刚性剪枝</span>}
+            {verification.proofTableHits !== null && <span>{verification.proofTableHits.toLocaleString()} 刚性置换命中</span>}
+            {verification.proofElapsedMs !== null && <span>{verification.proofElapsedMs} ms 刚性复证</span>}
+          </div>
+          <div className="move-table-wrap">
+            <table className="move-prediction-table">
+              <thead><tr><th>首着</th><th>回应</th><th>战术</th>{counts.map((item) => <th key={item.horizon}>H{item.horizon}</th>)}<th>首证</th></tr></thead>
+              <tbody>
+                {verification.moves.map((item) => (
+                  <tr key={item.key} className={`final-${item.final}`}>
+                    <th><span>{item.label}</span><small>{item.key}</small></th>
+                    <td>{item.replies}</td>
+                    <td>{[item.capture && '吃', item.check && '将', item.promotion && '升'].filter(Boolean).join('·') || '静'}</td>
+                    {item.outcomes.map((outcome, index) => <td className={`outcome-${outcome}`} key={index}>{outcome === 'win' ? '胜' : outcome === 'loss' ? '负' : '·'}</td>)}
+                    <td>{item.firstProof ? `H${item.firstProof}` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="horizon-footnote">“回应”是该首着落下后守方的立即合法着数量；搜索节点、剪枝与置换命中是本次设备实算值。逐着表会公开本题答案。</p>
+        </>
+      )}
+    </>
   );
 }
 

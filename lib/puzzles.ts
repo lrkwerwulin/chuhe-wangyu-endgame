@@ -1,5 +1,19 @@
 import type { GameState, Piece, Side } from './hybrid-engine';
 
+export interface ExpectedHorizonCount {
+  horizon: number;
+  wins: number;
+  losses: number;
+  unresolved: number;
+}
+
+export interface ExpectedReplyStats {
+  edges: number;
+  min: number;
+  max: number;
+  average: number;
+}
+
 export interface Puzzle {
   id: string;
   number: string;
@@ -13,12 +27,17 @@ export interface Puzzle {
   uniqueWinnerTurns: number;
   expectedWinningMoveKeys: string[];
   expectedPrincipalVariationKeys: string[];
+  expectedHorizonCounts: ExpectedHorizonCount[];
+  expectedReplyStats: ExpectedReplyStats;
   hint: string;
   motif: string;
   state: GameState;
 }
 
 const p = (id: string, side: Side, type: Piece['type'], x: number, y: number): Piece => ({ id, side, type, x, y });
+const horizons = (counts: Array<[wins: number, losses: number, unresolved: number]>): ExpectedHorizonCount[] => (
+  counts.map(([wins, losses, unresolved], index) => ({ horizon: index + 1, wins, losses, unresolved }))
+);
 
 export const PUZZLES: Puzzle[] = [
   {
@@ -34,6 +53,8 @@ export const PUZZLES: Puzzle[] = [
     uniqueWinnerTurns: 2,
     expectedWinningMoveKeys: ['28-08'],
     expectedPrincipalVariationKeys: ['28-08', '16-06', '08-06'],
+    expectedHorizonCounts: horizons([[0, 0, 26], [0, 0, 26], [1, 0, 25], [1, 2, 23], [1, 2, 23], [1, 13, 12], [1, 13, 12]]),
+    expectedReplyStats: { edges: 790, min: 3, max: 43, average: 30.38 },
     hint: '先把 c2 车横到 a2，等黑后进入 a4 后再沿 a 线收网。',
     motif: '三防全覆盖 · 横切 · 唯一双步',
     state: {
@@ -64,6 +85,8 @@ export const PUZZLES: Puzzle[] = [
     uniqueWinnerTurns: 2,
     expectedWinningMoveKeys: ['22-32'],
     expectedPrincipalVariationKeys: ['22-32', '55-34', '32-34'],
+    expectedHorizonCounts: horizons([[0, 0, 22], [0, 0, 22], [1, 0, 21], [1, 0, 21], [1, 0, 21], [1, 0, 21], [1, 0, 21]]),
+    expectedReplyStats: { edges: 558, min: 1, max: 28, average: 25.36 },
     hint: '白车先从 c8 到 d8；红马若垫到 d6，第二车必须立即吃入。',
     motif: '双防分支 · 穿针 · 以少胜多',
     state: {
@@ -92,6 +115,8 @@ export const PUZZLES: Puzzle[] = [
     uniqueWinnerTurns: 2,
     expectedWinningMoveKeys: ['55-66'],
     expectedPrincipalVariationKeys: ['55-66', '57-47', '76-58'],
+    expectedHorizonCounts: horizons([[0, 0, 29], [0, 0, 29], [1, 0, 28], [1, 0, 28], [1, 0, 28], [1, 0, 28], [1, 0, 28]]),
+    expectedReplyStats: { edges: 445, min: 1, max: 18, average: 15.34 },
     hint: '先让 f5 的象去 g4压缩九宫，再观察 h4 象通往 f2 的斜线。',
     motif: '双象协作 · 九宫边界 · 交叉封锁',
     state: {
@@ -122,6 +147,8 @@ export const PUZZLES: Puzzle[] = [
     uniqueWinnerTurns: 2,
     expectedWinningMoveKeys: ['79-89'],
     expectedPrincipalVariationKeys: ['79-89', '22-88', '89-88'],
+    expectedHorizonCounts: horizons([[0, 0, 29], [0, 0, 29], [1, 0, 28], [1, 23, 5], [1, 23, 5], [1, 26, 2], [1, 26, 2]]),
+    expectedReplyStats: { edges: 1369, min: 1, max: 54, average: 47.21 },
     hint: 'h1 车先走 i1；黑后从 c8 赶到 i2 后，沿同一纵线完成回收。',
     motif: '远端引离 · 边线回收 · 双车',
     state: {
@@ -152,6 +179,8 @@ export const PUZZLES: Puzzle[] = [
     uniqueWinnerTurns: 2,
     expectedWinningMoveKeys: ['43-53'],
     expectedPrincipalVariationKeys: ['43-53', '45-55', '53-55'],
+    expectedHorizonCounts: horizons([[0, 0, 24], [0, 0, 24], [1, 0, 23], [1, 0, 23], [1, 0, 23], [1, 0, 23], [1, 0, 23]]),
+    expectedReplyStats: { edges: 671, min: 1, max: 32, average: 27.96 },
     hint: 'e7 车只横移到 f7；不要急着吃 e5 的红车。',
     motif: '诱离 · 横后直取 · 唯一节奏',
     state: {
@@ -181,6 +210,8 @@ export const PUZZLES: Puzzle[] = [
     uniqueWinnerTurns: 2,
     expectedWinningMoveKeys: ['12-32'],
     expectedPrincipalVariationKeys: ['12-32', '48-37', '32-37'],
+    expectedHorizonCounts: horizons([[0, 0, 18], [0, 0, 18], [1, 0, 17], [1, 0, 17], [1, 0, 17], [1, 0, 17], [1, 0, 17]]),
+    expectedReplyStats: { edges: 153, min: 1, max: 9, average: 8.5 },
     hint: '从 b8 横到 d8，不要沿 b 线直接下压。',
     motif: '仕线偏转 · 单车强胜 · 两步唯一',
     state: {
@@ -209,6 +240,8 @@ export const PUZZLES: Puzzle[] = [
     uniqueWinnerTurns: 2,
     expectedWinningMoveKeys: ['12-82'],
     expectedPrincipalVariationKeys: ['12-82', '01-00', '82-02'],
+    expectedHorizonCounts: horizons([[0, 0, 16], [0, 0, 16], [1, 0, 15], [1, 4, 11], [1, 4, 11], [1, 5, 10], [1, 5, 10]]),
+    expectedReplyStats: { edges: 282, min: 1, max: 39, average: 17.63 },
     hint: 'b8 车先横穿到 i8 吃后；黑王退角后再回到 a8。',
     motif: '先取后 · 长线回转 · 安静首着',
     state: {
@@ -238,6 +271,8 @@ export const PUZZLES: Puzzle[] = [
     uniqueWinnerTurns: 2,
     expectedWinningMoveKeys: ['30-40'],
     expectedPrincipalVariationKeys: ['30-40', '65-47', '40-47'],
+    expectedHorizonCounts: horizons([[0, 0, 19], [0, 0, 19], [1, 0, 18], [1, 0, 18], [1, 0, 18], [1, 0, 18], [1, 0, 18]]),
+    expectedReplyStats: { edges: 87, min: 1, max: 5, average: 4.58 },
     hint: 'd10 车只需走到 e10；红相垫入后，沿 e 线直接吃到 e3。',
     motif: '相垫 · 纵贯 · 单车强胜',
     state: {

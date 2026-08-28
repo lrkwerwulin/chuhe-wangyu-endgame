@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   MATE_SCORE,
   analyseForcedWinMoves,
+  analyseMoveHorizons,
   analyseSurvivalMoves,
   applyMove,
   generateLegalMoves,
@@ -162,6 +163,26 @@ test('forced-win classifier proves a unique two-move win', () => {
   assert.equal(proof.rigid, true);
   assert.equal(proof.widestDecision, 1);
   assert.deepEqual(proof.pv.map(moveKey), ['30-40', '65-47', '40-47']);
+});
+
+test('per-move horizon classifications match independent minimax', () => {
+  const state = base([
+    piece('proof-rook', 'chess', 'rook', 3, 0),
+    piece('block-left', 'xiangqi', 'soldier', 3, 9),
+    piece('block-right', 'xiangqi', 'soldier', 5, 9),
+    piece('interposing-elephant', 'xiangqi', 'elephant', 6, 5),
+  ], 'chess', [4, 9], [0, 0]);
+  const analysis = analyseMoveHorizons(state, 3);
+  assert.equal(analysis.horizons[0].unresolved, analysis.legal.length);
+  assert.equal(analysis.horizons[1].unresolved, analysis.legal.length);
+  assert.equal(analysis.horizons[2].wins, 1);
+  assert.equal(analysis.horizons[2].losses, 0);
+  for (const verdict of analysis.legal) {
+    for (let horizon = 1; horizon <= 3; horizon += 1) {
+      const expected = -bruteMateOnlyNegamax(applyMove(state, verdict.move), horizon - 1, 1);
+      assert.equal(verdict.horizons[horizon - 1].score, expected, `${moveKey(verdict.move)} at H${horizon}`);
+    }
+  }
 });
 
 test('PVS result matches independent full-width minimax', () => {
