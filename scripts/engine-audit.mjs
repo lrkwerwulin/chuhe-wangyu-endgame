@@ -183,6 +183,26 @@ test('forced-win classifier proves a unique two-move win', () => {
   assert.deepEqual(proof.pv.map(moveKey), ['30-40', '65-47', '40-47']);
 });
 
+test('rigidity accepts defense branches that are mated before the longest line', () => {
+  const state = {
+    turn: 'chess',
+    ply: 0,
+    pieces: [
+      piece('c-king', 'chess', 'king', 0, 0),
+      piece('c-rook', 'chess', 'rook', 0, 9),
+      piece('c-knight', 'chess', 'knight', 8, 0),
+      piece('x-general', 'xiangqi', 'general', 3, 7),
+      piece('x-block-left', 'xiangqi', 'soldier', 3, 9),
+      piece('x-block-right', 'xiangqi', 'soldier', 1, 2),
+      piece('x-screen', 'xiangqi', 'soldier', 3, 2),
+    ],
+  };
+  const proof = proveForcedWinRigidity(state, 11, 6, 2, 20);
+  assert.equal(proof.mateMoves, 6);
+  assert.equal(proof.rigid, true);
+  assert.equal(moveKey(proof.rootWinningMoves[0]), '09-39');
+});
+
 test('per-move horizon classifications match independent minimax', () => {
   const state = base([
     piece('proof-rook', 'chess', 'rook', 3, 0),

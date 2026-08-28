@@ -26,6 +26,8 @@ for (const puzzle of PUZZLES) {
   const analysis = analyseMoveHorizons(puzzle.state, puzzle.proofDepth);
   const actualWinning = analysis.legal.filter((item) => item.finalOutcome === 'win').map((item) => moveKey(item.move)).sort();
   const expectedWinning = [...puzzle.expectedWinningMoveKeys].sort();
+  assert(analysis.legal.length >= 3, `${puzzle.id}: the opening must offer at least three legal choices`);
+  assert.equal(expectedWinning.length, 1, `${puzzle.id}: the exact-mate opening must have one winning move`);
   assert.deepEqual(actualWinning, expectedWinning, `${puzzle.id}: root winning-move proof changed`);
   const mateHorizon = puzzle.mateMoves * 2 - 1;
   const firstMateHorizonWinning = analysis.legal
@@ -88,6 +90,7 @@ for (const puzzle of PUZZLES) {
     human: puzzle.human,
     legal: analysis.legal.length,
     winning: actualWinning.length,
+    deadlineFailures: analysis.legal.length - actualWinning.length,
     replyEdges,
     horizon: analysis.horizons.map((item) => `${item.wins}/${item.losses}/${item.unresolved}`).join(' → '),
     mate: `M${proof.mateMoves}`,
@@ -108,6 +111,7 @@ console.log(`\nVerified ${summaries.length} puzzles (${mateRange}): every stored
 const totals = summaries.reduce((sum, item) => ({
   rootMoves: sum.rootMoves + item.legal,
   winningRootMoves: sum.winningRootMoves + item.winning,
+  deadlineFailures: sum.deadlineFailures + item.deadlineFailures,
   replyEdges: sum.replyEdges + item.replyEdges,
   decisionNodes: sum.decisionNodes + item.decisionNodes,
   defenseBranches: sum.defenseBranches + item.defenseBranches,
@@ -118,6 +122,7 @@ const totals = summaries.reduce((sum, item) => ({
 }), {
   rootMoves: 0,
   winningRootMoves: 0,
+  deadlineFailures: 0,
   replyEdges: 0,
   decisionNodes: 0,
   defenseBranches: 0,

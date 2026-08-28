@@ -860,9 +860,6 @@ export function proveForcedWinRigidity(
     if (winnerTurnIndex >= boundedWinnerTurns) {
       return { rigid: true, decisionNodes: 0, widestDecision: 0, defenseBranches: 0 };
     }
-    if (remainingDepth <= 0) {
-      return { rigid: false, decisionNodes: 0, widestDecision: 0, defenseBranches: 0 };
-    }
     const memoKey = `${positionKey(current)}|d${remainingDepth}|w${winnerTurnIndex}`;
     const memoized = memo.get(memoKey);
     if (memoized) return memoized;
@@ -870,9 +867,23 @@ export function proveForcedWinRigidity(
     const moves = generateLegalMoves(current);
     context.stats.generatedMoves += moves.length;
     if (moves.length === 0) {
-      const terminal: RigidityVisit = { rigid: false, decisionNodes: 0, widestDecision: 0, defenseBranches: 0 };
+      // A defense branch may be mated before the longest principal variation.
+      // That branch satisfies all remaining winner-decision constraints
+      // vacuously; only a terminal position with the winner to move is a
+      // failed continuation.
+      const terminal: RigidityVisit = {
+        rigid: current.turn !== winner,
+        decisionNodes: 0,
+        widestDecision: 0,
+        defenseBranches: 0,
+      };
       memo.set(memoKey, terminal);
       return terminal;
+    }
+    if (remainingDepth <= 0) {
+      const exhausted: RigidityVisit = { rigid: false, decisionNodes: 0, widestDecision: 0, defenseBranches: 0 };
+      memo.set(memoKey, exhausted);
+      return exhausted;
     }
 
     const children = orderedChildren(current, moves, context, searchPly);

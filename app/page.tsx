@@ -9,7 +9,6 @@ import {
   moveKey,
   pieceAt,
   PIECE_MARK,
-  searchForcedOutcome,
   squareName,
   type GameState,
   type HorizonOutcome,
@@ -70,6 +69,20 @@ type WorkerResponse =
   | { kind: 'complete'; token: number; report: Pick<Verification, 'rigid' | 'decisionNodes' | 'defenseBranches' | 'proofNodes' | 'proofCutoffs' | 'proofTableHits' | 'proofElapsedMs'> }
   | { kind: 'error'; token: number; message: string };
 
+type MoveWorkerResponse =
+  | {
+    kind: 'result';
+    token: number;
+    report: {
+      preservesDeadline: boolean;
+      opponentForcesMate: boolean;
+      bestMove: Move | null;
+      pv: Move[];
+      matePlies: number | null;
+    };
+  }
+  | { kind: 'error'; token: number; message: string };
+
 const cloneState = (state: GameState): GameState => ({ ...state, pieces: state.pieces.map((piece) => ({ ...piece })) });
 
 function factionName(side: Puzzle['human']): string {
@@ -98,6 +111,7 @@ function buildPv(start: GameState, pv: Move[]): string[] {
 
 export default function Home() {
   const actionToken = useRef(0);
+  const moveWorker = useRef<Worker | null>(null);
   const verificationToken = useRef(0);
   const verificationWorker = useRef<Worker | null>(null);
   const [puzzleIndex, setPuzzleIndex] = useState(0);
@@ -129,12 +143,15 @@ export default function Home() {
     window.addEventListener('keydown', closeOnEscape);
     return () => {
       window.removeEventListener('keydown', closeOnEscape);
+      moveWorker.current?.terminate();
       verificationWorker.current?.terminate();
     };
   }, []);
 
   function loadPuzzle(index: number): void {
     actionToken.current += 1;
+    moveWorker.current?.terminate();
+    moveWorker.current = null;
     verificationToken.current += 1;
     verificationWorker.current?.terminate();
     verificationWorker.current = null;
@@ -156,6 +173,8 @@ export default function Home() {
 
   function resetPuzzle(): void {
     actionToken.current += 1;
+    moveWorker.current?.terminate();
+    moveWorker.current = null;
     setState(cloneState(puzzle.state));
     setSelected(null);
     setLastMove(null);
@@ -171,63 +190,73 @@ export default function Home() {
     actionToken.current = token;
     const label = formatMove(state, move);
     const next = applyMove(state, move);
-    const expectedMoveKey = puzzle.expectedPrincipalVariationKeys[solutionPly];
-    const preservesWin = moveKey(move) === expectedMoveKey;
     setState(next);
     setLastMove(move);
     setSelected(null);
-    if (preservesWin) {
+    setStatus('thinking');
+    setProof([...proof, label]);
+    const remainingDepth = Math.max(1, puzzle.proofDepth - solutionPly - 1);
+    setNotice(`${label} 已落下。求解器正在穷举剩余 H${remainingDepth}，判断它是否仍能按时强胜…`);
+
+    moveWorker.current?.terminate();
+    const worker = new Worker(new URL('./move-worker.ts', import.meta.url), { type: 'module' });
+    moveWorker.current = worker;
+    worker.onmessage = ({ data }: MessageEvent<MoveWorkerResponse>) => {
+      if (data.token !== actionToken.current) return;
+      worker.terminate();
+      moveWorker.current = null;
+      if (data.kind === 'error') {
+        setStatus('wrong');
+        setNotice(`本机求解没有完成：${data.message}`);
+        return;
+      }
+
       const nextProof = [...proof, label];
-      setProof(nextProof);
-      const defenseKey = puzzle.expectedPrincipalVariationKeys[solutionPly + 1];
-      if (!defenseKey) {
+      if (!data.report.preservesDeadline) {
+        const line = buildPv(next, data.report.pv);
+        setProof([...nextProof, ...line]);
+        if (data.report.bestMove) {
+          setState(applyMove(next, data.report.bestMove));
+          setLastMove(data.report.bestMove);
+        }
+        setStatus('wrong');
+        setNotice(data.report.opponentForcesMate
+          ? `此着允许守方在剩余窗口内强制反杀；M${puzzle.mateMoves} 挑战失败。`
+          : `此着无法在剩余 H${remainingDepth} 内强制终局；已经错过 M${puzzle.mateMoves} 最短时限，挑战失败。`);
+        return;
+      }
+
+      if (!data.report.bestMove) {
+        setProof(nextProof);
         setStatus('correct');
         setNotice(`${label}。M${puzzle.mateMoves} 强制终局完成；${rigiditySummary(puzzle)}。`);
         return;
       }
 
-      setStatus('thinking');
-      setNotice(`${label} 保持强制胜势。守方正在选择证明线中的最强抵抗…`);
-      window.setTimeout(() => {
-        if (actionToken.current !== token) return;
-        const defense = generateLegalMoves(next).find((candidate) => moveKey(candidate) === defenseKey);
-        if (!defense) {
-          setStatus('wrong');
-          setNotice('存档主变化与当前引擎不一致；请使用“本机重新验证”复查此题。');
-          return;
-        }
-        const defenseLabel = formatMove(next, defense);
-        setState(applyMove(next, defense));
-        setLastMove(defense);
-        setSolutionPly(solutionPly + 2);
-        setProof([...nextProof, defenseLabel]);
-        setStatus('ready');
-        const nextWinnerTurn = Math.floor(solutionPly / 2) + 2;
-        const nextTask = nextWinnerTurn <= puzzle.uniqueWinnerTurns ? '唯一胜着' : '主证明线继续着';
-        setNotice(`${defenseLabel}。守方已作最长抵抗；现在寻找胜方第 ${nextWinnerTurn} 着：${nextTask}。`);
-      }, 360);
-      return;
-    }
-
-    setStatus('thinking');
-    setProof([label]);
-    setNotice(`${label} 不能维持已证明的强制胜利，求解器正在给出最佳反证…`);
-    window.setTimeout(() => {
-      if (actionToken.current !== token) return;
-      const remainingDepth = Math.max(1, puzzle.proofDepth - solutionPly - 1);
-      const result = searchForcedOutcome(next, remainingDepth);
-      const line = buildPv(next, result.pv);
-      setProof([label, ...line]);
-      if (result.bestMove) {
-        setState(applyMove(next, result.bestMove));
-        setLastMove(result.bestMove);
+      const defense = generateLegalMoves(next).find((candidate) => moveKey(candidate) === moveKey(data.report.bestMove as Move));
+      if (!defense) {
+        setStatus('wrong');
+        setNotice('求解器返回了无法复现的防守着；请重置后使用“本机重新验证”复查。');
+        return;
       }
+      const defenseLabel = formatMove(next, defense);
+      setState(applyMove(next, defense));
+      setLastMove(defense);
+      setSolutionPly(solutionPly + 2);
+      setProof([...nextProof, defenseLabel]);
+      setStatus('ready');
+      const nextWinnerTurn = Math.floor(solutionPly / 2) + 2;
+      const nextTask = nextWinnerTurn <= puzzle.uniqueWinnerTurns ? '唯一胜着' : '限时胜着（可能多解）';
+      setNotice(`${defenseLabel}。守方已作最长抵抗；现在寻找胜方第 ${nextWinnerTurn} 着：${nextTask}。`);
+    };
+    worker.onerror = () => {
+      if (token !== actionToken.current) return;
+      worker.terminate();
+      moveWorker.current = null;
       setStatus('wrong');
-      const winnerTurn = Math.floor(solutionPly / 2) + 1;
-      setNotice(winnerTurn <= puzzle.uniqueWinnerTurns
-        ? `强制胜证明在第 ${winnerTurn} 次决策处断裂；此着不再保证 H${puzzle.proofDepth} 窗口内获胜。`
-        : `此着不在存档的最长抵抗主证明线上；这不等于它在更深层必负。`);
-    }, 80);
+      setNotice('走法复证线程没有完成；请重置残局后重试。');
+    };
+    worker.postMessage({ token, state: next, depth: remainingDepth });
   }
 
   function handleSquare(x: number, y: number): void {
@@ -299,7 +328,7 @@ export default function Home() {
     });
   }
 
-  const resultLabel = status === 'correct' ? '强制胜利' : status === 'wrong' ? '证明断裂' : status === 'thinking' ? '正在推演' : '轮到你';
+  const resultLabel = status === 'correct' ? '强制胜利' : status === 'wrong' ? '挑战失败' : status === 'thinking' ? '正在推演' : '轮到你';
 
   return (
     <main className="shell">
@@ -320,7 +349,7 @@ export default function Home() {
         <aside className="brief-card">
           <div className="puzzle-heading">
             <p className="eyebrow">残局 {puzzle.number} · {puzzle.material}</p>
-            <span>连续唯一</span>
+            <span>开局唯一 · 限时</span>
           </div>
           <h1>{puzzle.title}</h1>
           <p className="lede">{puzzle.subtitle}</p>
@@ -349,7 +378,7 @@ export default function Home() {
           <div className="puzzle-list" aria-label="残局列表">
             {PUZZLES.map((item, index) => (
               <button className={index === puzzleIndex ? 'active' : ''} type="button" key={item.id} onClick={() => loadPuzzle(index)} aria-label={`打开残局 ${item.number}：${item.title}`}>
-                <span>{item.number}</span><div><strong>{item.title}</strong><small>{item.material} · {item.human === 'xiangqi' ? '执象' : '执国'}</small></div>
+                <span>{item.number}</span><div><strong>{item.title}</strong><small>{item.material} · M{item.mateMoves} · {item.human === 'xiangqi' ? '执象' : '执国'}</small></div>
               </button>
             ))}
           </div>
@@ -404,7 +433,7 @@ export default function Home() {
             <div><dt>当前合法着</dt><dd>{legalMoves.length}</dd></div>
             <div><dt>根节点胜着</dt><dd className="accent">{puzzle.expectedWinningMoveKeys.length}</dd></div>
             <div><dt>H2 回应边</dt><dd>{puzzle.expectedReplyStats.edges}</dd></div>
-            <div><dt>连续唯一</dt><dd>{puzzle.uniqueWinnerTurns}/{puzzle.winnerTurns} 次</dd></div>
+            <div><dt>前段唯一</dt><dd>{puzzle.uniqueWinnerTurns}/{puzzle.winnerTurns} 次</dd></div>
             <div><dt>复证窗口</dt><dd>{puzzle.proofDepth} ply</dd></div>
           </dl>
 
@@ -431,7 +460,7 @@ export default function Home() {
 
           <button className="verify-button" type="button" onClick={verifyPuzzle} disabled={verifying}>
             {verifying
-              ? verification ? '预测漏斗完成，正在复证连续唯一…' : `正在计算 H1—H${puzzle.proofDepth} 全部首着…`
+              ? verification ? '预测漏斗完成，正在复证胜法刚性…' : `正在计算 H1—H${puzzle.proofDepth} 全部首着…`
               : verification ? '重新计算并验证此题' : '本机计算逐着预测'}
           </button>
           {verification && (
@@ -440,7 +469,7 @@ export default function Home() {
                 ? `H1—H${puzzle.proofDepth} 已完成：${verification.winning}/${verification.legal} 已证胜着`
                 : verification.rigid ? `证明一致：${verification.winning}/${verification.legal} 胜着，M${verification.mateMoves}` : '证明已发生变化'}</strong>
               {verification.rigid === null ? (
-                <span>逐层分类已返回；连续唯一性的全分支复证仍在运行。</span>
+                <span>逐层分类已返回；胜方决策刚性的全分支复证仍在运行。</span>
               ) : (
                 <span>{verification.decisionNodes?.toLocaleString()} 个胜方决策点 · {verification.defenseBranches?.toLocaleString()} 条防守边</span>
               )}
@@ -531,7 +560,7 @@ function HorizonPanel({
     <>
       <p className="eyebrow">MEASURABLE MOVE HORIZONS</p>
       <h2 id="modal-title">逐着预测漏斗</h2>
-      <p className="modal-intro">H1 表示只看当前首着，H2 再加入守方一着，本题依次扩展到 H{puzzle.proofDepth}。绿色和红色都必须有终局证明；灰色只是“当前深度未决”，绝不冒充可行或胜着。</p>
+       <p className="modal-intro">H1 表示只看当前首着，H2 再加入守方一着，本题依次扩展到 H{puzzle.proofDepth}。绿色和红色都必须有终局证明；灰色表示双方在当前深度都没有强制终局。若到最终 H 仍为灰色，它会因错过本题 M 时限而判挑战失败，但不冒充棋理上的必负。</p>
 
       <div className="horizon-summary">
         <article><small>合法首着</small><strong>{rootTotal}</strong></article>
@@ -544,7 +573,7 @@ function HorizonPanel({
 
       <div className="horizon-actions">
         <button className="primary-action" type="button" onClick={onVerify} disabled={verifying}>
-          {verifying ? verification ? '漏斗已返回，正在复证连续唯一…' : '正在搜索全部首着…' : verification ? '重新计算全部首着' : `运行并显示 ${counts[0]?.unresolved ?? 0} 条逐着记录`}
+          {verifying ? verification ? '漏斗已返回，正在复证胜法刚性…' : '正在搜索全部首着…' : verification ? '重新计算全部首着' : `运行并显示 ${counts[0]?.unresolved ?? 0} 条逐着记录`}
         </button>
         <p>计算在独立线程运行；“结论继承”会跳过已经证明的着法，未决着法继续加深。</p>
       </div>
@@ -597,7 +626,8 @@ function RulesPanel() {
         <article><span>03</span><h3>飞将</h3><p>帅与西洋王处在同一纵线且中间无子时，视为帅沿纵线攻击西洋王；任何一方都不能制造或保留非法照面。</p></article>
         <article><span>04</span><h3>残局简化</h3><p>关闭王车易位、吃过路兵、兵的首次两格与长将长捉裁决；西洋兵抵达南端自动升后。当前短杀题不启用重复与自然限着。</p></article>
       </div>
-      <div className="definition-box"><strong>什么叫这里的“强胜残局”？</strong><p>双方仅余 2–5 子（王/将计入）。执子方可在题目公开的 H7 或 H9 窗口内强制终局；根节点恰好一条胜着，并逐题声明前几次胜方决策必须唯一、后续最多允许几条等价胜着。</p></div>
+      <div className="definition-box"><strong>什么叫这里的“限时强胜残局”？</strong><p>双方仅余 2–5 子（王/将计入）。执子方可在题目公开的 H7、H9 或 H11 窗口内强制终局；开局至少三种合法走法，且恰好一条首着能守住 M2、M5 或 M6 时限。每题另行声明前几次胜方决策必须唯一。</p></div>
+      <div className="definition-box"><strong>错误着为什么会失败？</strong><p>游戏采用“精确杀程挑战”：每次落子都由独立线程重新穷举剩余窗口。若该着无法继续保证在截止层前终局，立即判挑战失败；若还能强胜，系统接受它，即使它不是存档主变化。界面会明确区分“错过时限”和“被对手强制反杀”。</p></div>
       <div className="source-links">
         <a href="https://rcc.fide.com/fide-laws-of-chess_fulltexthtml/" target="_blank" rel="noreferrer">FIDE 国际象棋规则 ↗</a>
         <a href="https://www.wxf-xiangqi.org/images/wxf-rules/2018_World_XiangQi_Rules_English2018.pdf" target="_blank" rel="noreferrer">WXF 世界象棋规则 ↗</a>
@@ -616,7 +646,7 @@ function ResearchPanel() {
         <article><div><span>国际象棋基线</span><b>4,389 ★</b></div><h3>jhlywa/chess.js</h3><p>BSD-2-Clause · 固定提交 d43e668</p><p>461 / 464 测试通过；3 项失败仅为 Windows 换行符差异。Perft 与将死测试均通过，生产依赖漏洞为 0。</p><a href="https://github.com/jhlywa/chess.js" target="_blank" rel="noreferrer">查看仓库 ↗</a></article>
         <article><div><span>中国象棋基线</span><b>243 ★</b></div><h3>xqbase/xqwlight</h3><p>GPL-2.0 · 固定提交 6221733</p><p>本地跑过 240 个残局：7,809 个生成着与合法着基线一致，7,207 着通过自将过滤，718 着形成将军。</p><a href="https://github.com/xqbase/xqwlight" target="_blank" rel="noreferrer">查看仓库 ↗</a></article>
       </div>
-      <div className="definition-box"><strong>M5 长杀搜索结果</strong><p>12 题共覆盖 232 个合法首着；4 枚 M5 在 H1–H8 均无强杀，H9 才各出现一条唯一根胜着。奖励策略只排列候选，最终仍由无损全分支搜索证明。本轮也找到 H11 的 M6，但唯一性抛光最低仍为两条根胜着，因此没有冒充正式题。</p></div>
+      <div className="definition-box"><strong>M5 / M6 长杀搜索结果</strong><p>20 题共覆盖 341 个合法首着，其中 8 枚 M5 直到 H9、4 枚 M6 直到 H11 才各出现一条唯一根胜着；其余 321 个首着全部无法守住各题截止层。M6“九门十一层”的前两次胜方决策唯一，证明覆盖 169 条防守边。奖励策略只排列候选，最终仍由无损全分支搜索裁决。</p></div>
       <h3 className="section-label">可借鉴的网站</h3>
       <div className="precedent-list">
         <a href="https://www.pychess.org/" target="_blank" rel="noreferrer"><strong>PyChess</strong><span>多棋种、AI 与自定义变体</span>↗</a>

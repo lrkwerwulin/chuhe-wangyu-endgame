@@ -23,7 +23,9 @@ const evaluationsPerLayer = Math.max(20, Math.min(5_000, Number(option('evaluati
 const maxDefensePredecessors = Math.max(1, Math.min(80, Number(option('defense-predecessors') ?? 28)));
 const maxHumanPredecessors = Math.max(4, Math.min(160, Number(option('human-predecessors') ?? 56)));
 const maxDefenseReplies = Math.max(1, Math.min(16, Number(option('max-defense-replies') ?? 2)));
-const maxRootMoves = Math.max(4, Math.min(40, Number(option('max-root-moves') ?? 28)));
+const minRootMoves = Math.max(3, Math.min(20, Number(option('min-root-moves') ?? 4)));
+const maxRootMoves = Math.max(minRootMoves, Math.min(40, Number(option('max-root-moves') ?? 28)));
+const choiceWeight = Math.max(0, Math.min(20, Number(option('choice-weight') ?? 4)));
 const seedCount = Math.max(1, Math.min(60, Number(option('seed-count') ?? 14)));
 const nodeBudget = Math.max(10_000, Math.min(10_000_000, Number(option('node-budget') ?? 350_000)));
 const polishGenerations = Math.max(0, Math.min(4, Number(option('polish-generations') ?? 2)));
@@ -31,7 +33,7 @@ const polishBeamWidth = Math.max(1, Math.min(24, Number(option('polish-beam') ??
 const polishEvaluations = Math.max(10, Math.min(2_000, Number(option('polish-evaluations') ?? 140)));
 const polishNodeBudget = Math.max(10_000, Math.min(10_000_000, Number(option('polish-node-budget') ?? nodeBudget)));
 const uniqueWinnerTurns = Math.max(1, Math.min(targetMoves, Number(option('unique-turns') ?? Math.min(3, targetMoves))));
-const maxWinningMoves = Math.max(1, Math.min(4, Number(option('max-winning-moves') ?? 2)));
+const maxWinningMoves = Math.max(1, Math.min(24, Number(option('max-winning-moves') ?? 2)));
 const initialSeed = Number(option('seed') ?? 20260828) >>> 0;
 const requestedSource = option('source') ?? null;
 const requestedBase = option('base');
@@ -161,7 +163,7 @@ function baseHeuristic(proposal) {
   score += proposal.defense.legalCount === 1 ? 220 : 80 / proposal.defense.legalCount;
   if (proposal.humanCheck) score += 180;
   if (proposal.givesCheck) score += 150;
-  score += Math.max(0, 90 - Math.abs(6 - proposal.human.legalCount) * 9);
+  score += Math.max(0, 90 - Math.abs(12 - proposal.human.legalCount) * 7);
   score += Math.max(0, 30 - proposal.human.distance * 4);
   if (proposal.human.moverType === 'king' || proposal.human.moverType === 'general') score += 25;
   return score;
@@ -221,12 +223,12 @@ function buildProposals(node, seen) {
   );
   for (const defense of defenses) {
     const humanOptions = predecessorStates(defense.state).filter((item) => (
-      item.legalCount >= 2 && item.legalCount <= maxRootMoves
+      item.legalCount >= minRootMoves && item.legalCount <= maxRootMoves
     ));
     const humans = samplePredecessors(humanOptions, maxHumanPredecessors, (item) => {
       const humanCheck = isInCheck(item.state, node.winner);
       const givesCheck = isInCheck(defense.state, defense.state.turn);
-      return (humanCheck ? 180 : 0) + (givesCheck ? 140 : 0) - Math.abs(6 - item.legalCount) * 8 - item.distance;
+      return (humanCheck ? 180 : 0) + (givesCheck ? 140 : 0) - Math.abs(12 - item.legalCount) * 7 - item.distance;
     });
     for (const human of humans) {
       const key = signature(human.state);
@@ -271,7 +273,7 @@ function relocatedStates(node, focusMoves, mutationSeen) {
         const key = signature(state);
         if (mutationSeen.has(key)) continue;
         const legal = generateLegalMoves(state);
-        if (legal.length < 2 || legal.length > maxRootMoves) continue;
+        if (legal.length < minRootMoves || legal.length > maxRootMoves) continue;
         const legalKeys = new Set(legal.map(moveKey));
         const survivingFocusMoves = [...focusKeys].filter((move) => legalKeys.has(move)).length;
         const keepsPreferredMove = preferredKey ? legalKeys.has(preferredKey) : false;
@@ -360,7 +362,7 @@ function polishCandidate(candidate, initialRoot) {
 
     exact.sort((a, b) => (
       a.winningCount - b.winningCount
-      || a.rootMoves - b.rootMoves
+      || b.rootMoves - a.rootMoves
       || a.exactNodes - b.exactNodes
     ));
     frontier = exact.slice(0, polishBeamWidth);
@@ -543,7 +545,7 @@ for (let nextMatePlies = beam[0].matePlies + 2; nextMatePlies <= targetPlies; ne
     const result = searchForcedOutcomeLimited(proposal.state, nextMatePlies, nodeBudget);
     const exact = !result.aborted && result.score > MATE_SCORE / 2 && result.matePlies === nextMatePlies;
     const reward = exact
-      ? 260 + (proposal.humanCheck ? 45 : 0) + (proposal.givesCheck ? 35 : 0) + Math.max(0, 80 - proposal.human.legalCount * 7)
+      ? 260 + (proposal.humanCheck ? 45 : 0) + (proposal.givesCheck ? 35 : 0) + Math.min(20, proposal.human.legalCount) * choiceWeight
       : (result.matePlies ?? 0) * 12 + result.completedDepth * 2;
     reinforce(proposal, reward);
     if (!exact) continue;
@@ -567,7 +569,7 @@ for (let nextMatePlies = beam[0].matePlies + 2; nextMatePlies <= targetPlies; ne
   }
 
   successes.sort((a, b) => (
-    a.rootMoves - b.rootMoves
+    b.rootMoves - a.rootMoves
     || Number(b.humanCheck) - Number(a.humanCheck)
     || Number(b.givesCheck) - Number(a.givesCheck)
     || a.exactNodes - b.exactNodes
@@ -639,6 +641,7 @@ for (const candidate of beam.filter((item) => item.matePlies === targetPlies)) {
     matePlies: targetPlies,
     mateMoves: targetMoves,
     legalMoves: root.legal.length,
+    deadlineFailures: root.legal.length - proof.rootWinningMoves.length,
     winningMoveKeys: proof.rootWinningMoves.map(moveKey),
     winningMoves: proof.rootWinningMoves.map((move) => formatMove(finalist.state, move)),
     principalVariationKeys: proof.pv.map(moveKey),
@@ -678,6 +681,9 @@ console.log(JSON.stringify({
     maxDefensePredecessors,
     maxHumanPredecessors,
     maxDefenseReplies,
+    minRootMoves,
+    maxRootMoves,
+    choiceWeight,
     seedCount,
     uniqueWinnerTurns,
     maxWinningMoves,

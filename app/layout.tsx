@@ -6,7 +6,7 @@ const sans = Noto_Sans_SC({ variable: '--font-sans', subsets: ['latin'], weight:
 const serif = Noto_Serif_SC({ variable: '--font-serif', subsets: ['latin'], weight: ['600', '700', '900'] });
 const siteUrl = new URL('https://chuhe-wangyu-endgame.lrk-wer.chatgpt.site');
 const title = '楚河·王域｜象棋 VS 国际象棋残局实验室';
-const description = '在 9×10 混合棋盘上破解经全分支搜索证明的 M2/M5 象棋 VS 国际象棋残局，逐层查看最短胜着与分支刚性。';
+const description = '在 9×10 混合棋盘上破解经全分支搜索证明的 M2/M5/M6 象棋 VS 国际象棋残局：多种合法首着，只有一着守住最短胜利时限。';
 const socialImage = new URL('/og.png', siteUrl).toString();
 
 export const metadata: Metadata = {

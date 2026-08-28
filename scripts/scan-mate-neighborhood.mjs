@@ -22,10 +22,30 @@ const screenBudget = Math.max(10_000, Math.min(5_000_000, Number(option('screen-
 const proofBudget = Math.max(screenBudget, Math.min(20_000_000, Number(option('proof-budget') ?? 1_200_000)));
 const maxEvaluations = Math.max(10, Math.min(5_000, Number(option('evaluations') ?? 800)));
 const maxProofs = Math.max(1, Math.min(1_000, Number(option('proofs') ?? 120)));
+const minRootMoves = Math.max(3, Math.min(20, Number(option('min-root-moves') ?? 4)));
+const targetRootMoves = Math.max(minRootMoves, Math.min(40, Number(option('target-root-moves') ?? 14)));
 const uniqueTurns = Math.max(1, Math.min(targetMoves, Number(option('unique-turns') ?? 2)));
-const maxWinningMoves = Math.max(1, Math.min(6, Number(option('max-winning-moves') ?? 3)));
+const maxWinningMoves = Math.max(1, Math.min(24, Number(option('max-winning-moves') ?? 3)));
 const pieceFilter = new Set((option('pieces') ?? '').split(',').filter(Boolean));
 const EXPERIMENTAL_SOURCES = [
+  {
+    id: 'eleven-ply-rigid-nine-choice-seed',
+    mateMoves: 6,
+    human: 'chess',
+    state: {
+      turn: 'chess',
+      ply: 0,
+      pieces: [
+        { id: 'c-king', side: 'chess', type: 'king', x: 0, y: 0 },
+        { id: 'c-rook', side: 'chess', type: 'rook', x: 0, y: 9 },
+        { id: 'c-knight', side: 'chess', type: 'knight', x: 8, y: 0 },
+        { id: 'x-general', side: 'xiangqi', type: 'general', x: 3, y: 7 },
+        { id: 'x-block-left', side: 'xiangqi', type: 'soldier', x: 3, y: 9 },
+        { id: 'x-block-right', side: 'xiangqi', type: 'soldier', x: 0, y: 8 },
+        { id: 'x-screen', side: 'xiangqi', type: 'soldier', x: 3, y: 2 },
+      ],
+    },
+  },
   {
     id: 'eleven-ply-two-rook-seed',
     mateMoves: 6,
@@ -121,7 +141,7 @@ for (const sourcePiece of source.state.pieces) {
       if (seen.has(key)) continue;
       seen.add(key);
       const legalCount = generateLegalMoves(state).length;
-      if (legalCount < 2 || legalCount > 40) continue;
+      if (legalCount < minRootMoves || legalCount > 40) continue;
       const royal = sourcePiece.type === 'king' || sourcePiece.type === 'general';
       const moverSidePenalty = sourcePiece.side === source.human ? 0 : 8;
       const displacement = Math.max(Math.abs(sourcePiece.x - x), Math.abs(sourcePiece.y - y));
@@ -130,7 +150,7 @@ for (const sourcePiece of source.state.pieces) {
         key,
         legalCount,
         mutation: `${sourcePiece.id}:${sourcePiece.x}${sourcePiece.y}-${x}${y}`,
-        heuristic: (royal ? 20 : 0) + moverSidePenalty + Math.abs(8 - legalCount) * 2 - displacement,
+        heuristic: (royal ? 20 : 0) + moverSidePenalty + Math.abs(targetRootMoves - legalCount) * 2 - displacement,
       });
     }
   }
@@ -195,7 +215,7 @@ for (let index = 0; index < proofQueue.length; index += 1) {
 exact.sort((a, b) => (
   Number(b.rigidity.rigid) - Number(a.rigidity.rigid)
   || a.root.winning.length - b.root.winning.length
-  || a.root.legal.length - b.root.legal.length
+  || b.root.legal.length - a.root.legal.length
   || a.rigidity.widestDecision - b.rigidity.widestDecision
 ));
 const results = exact.slice(0, Math.max(requested, 12)).map(({ candidate, result, root, rigidity }) => ({
@@ -205,6 +225,7 @@ const results = exact.slice(0, Math.max(requested, 12)).map(({ candidate, result
   mutation: candidate.mutation,
   legalMoves: root.legal.length,
   winningMoves: root.winning.length,
+  deadlineFailures: root.legal.length - root.winning.length,
   winningMoveKeys: root.winning.map((item) => moveKey(item.move)),
   rigid: rigidity.rigid,
   uniqueTurns,
@@ -235,6 +256,8 @@ console.log(JSON.stringify({
     proofBudget,
     proofQueue: proofQueue.length,
     exact: exact.length,
+    minRootMoves,
+    targetRootMoves,
   },
   candidates: results,
 }, null, 2));
