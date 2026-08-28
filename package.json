@@ -1,0 +1,55 @@
+{
+  "name": "chuhe-wangyu-endgame",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Verified Xiangqi-vs-chess endgame puzzles on a 9×10 board.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.32.1",
+  "homepage": "https://chuhe-wangyu-endgame.lrk-wer.chatgpt.site",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lrkwerwulin/chuhe-wangyu-endgame.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lrkwerwulin/chuhe-wangyu-endgame/issues"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "vinext dev",
+    "build": "vinext build",
+    "start": "vinext start",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern research/upstream --ignore-pattern tmp",
+    "typecheck": "tsc --noEmit",
+    "audit:engine": "node --experimental-strip-types scripts/engine-audit.mjs",
+    "verify:puzzles": "node --experimental-strip-types scripts/verify-puzzles.mjs",
+    "generate:puzzles": "node --experimental-strip-types scripts/generate-puzzle-candidates.mjs",
+    "evolve:puzzles": "node --experimental-strip-types scripts/evolve-puzzle-candidates.mjs"
+  },
+  "dependencies": {
+    "next": "16.3.3",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.37.1",
+    "@cloudflare/workers-types": "4.20260515.1",
+    "@openai/sites-vite-plugin": "^0.1.0 || ^0.2.0",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6",
+    "react-server-dom-webpack": "19.2.6",
+    "tailwindcss": "4.2.1",
+    "typescript": "5.9.3",
+    "vinext": "1.0.0-beta.3",
+    "vite": "8.0.13",
+    "wrangler": "4.92.0"
+  },
+  "type": "module"
+}
